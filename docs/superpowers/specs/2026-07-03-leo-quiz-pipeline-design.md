@@ -111,26 +111,70 @@ Each category has its own gradient theme for backgrounds and UI elements:
 | Fruits | #F1C40F (yellow) | #E91E63 (pink) | Yellow → Pink |
 | Flags | #9B59B6 (purple) | #1ABC9C (teal) | Multicolor gradient |
 
-### 2.4 Motion & Animation
+### 2.4 Motion & Animation System
 
-Nothing is static. Every element has motion:
+**Core principle:** Nothing appears or disappears instantly. Every element enters, exits, and
+transitions with proper easing curves. This is what separates professional kids content from
+amateur slideshows.
 
-- **Silhouette entrance:** slides in from left/right with ease-out curve (0.5s)
-- **Countdown numbers:** scale up from 0%→100% with bounce overshoot, one per second
-- **Reveal:** image scales from 80%→105%→100% (pop effect, 0.3s)
-- **Fun fact text:** word-by-word type-in (synced to voice timing)
-- **Score counter:** number ticks up with scale pulse
-- **Leo mascot:** 2-3 frame idle bounce loop; switches to celebrate pose on reveal
-- **Background:** slow-drifting particle/sparkle overlay (subtle, adds depth)
-- **Transitions between rounds:** horizontal wipe or scale-out/scale-in (0.3s)
+**Easing library:** `easing-functions` (pip) — Penner's standard curves used in all motion:
 
-### 2.5 Typography
+| Motion | Easing Curve | Duration | Description |
+|--------|-------------|----------|-------------|
+| Silhouette entrance | `CubicEaseOut` | 0.4s | Slides in from left, decelerates to rest |
+| Silhouette exit | `CubicEaseIn` | 0.25s | Accelerates out to right |
+| Countdown number in | `BackEaseOut` | 0.35s | Scales 0%→110%→100% (overshoot pop) |
+| Countdown number out | `QuadEaseIn` | 0.15s | Quick shrink before next number |
+| Reveal image | `ElasticEaseOut` | 0.5s | Scales 0%→100% with springy bounce — the "wow" moment |
+| Fun fact text | `QuadEaseOut` | per word | Each word fades in + slides up 5px, synced to voice timestamps |
+| Score counter | `BounceEaseOut` | 0.3s | Number ticks up with bouncy settle |
+| Leo pose swap | `CubicEaseInOut` | 0.2s | Crossfade between thinking→excited |
+| Round transition | `CubicEaseInOut` | 0.3s | Current round scales down + fades, next scales up + fades in |
+| Title bar entrance | `QuadEaseOut` | 0.3s | Slides down from top of frame |
+| Question text | `QuadEaseOut` | 0.3s | Fades in + slight scale 95%→100% |
+| Answer text | `BackEaseOut` | 0.4s | Pops in with overshoot — celebratory feel |
+
+**Particle overlay system (continuous):**
+- 15-25 small sparkle/star particles drifting slowly across background
+- Each particle: random size (2-6px), random opacity (20-60%), random drift speed
+- Rendered as a looping transparent overlay composited on every frame
+- Color: white/gold sparkles on all category backgrounds
+- Adds visual depth and "premium animation" feel kids associate with high-quality content
+
+**Leo mascot animation:**
+- Idle state: subtle vertical bounce (3px up/down, `SineEaseInOut`, 1.2s loop)
+- Thinking→Excited transition: quick crossfade (0.2s) when answer reveals
+- Scale pulse on reveal: Leo grows 110%→100% (`BackEaseOut`, 0.3s) simultaneously with the answer
+
+**Background motion:**
+- Gradient background slowly shifts hue (±5°) over the duration of each round
+- Creates a subtle "living" feel without being distracting
+
+### 2.5 Compositing Architecture
+
+Videos are built with **layered compositing** (CompositeVideoClip), not simple concatenation.
+Every frame has 5 layers rendered in order:
+
+```
+Layer 5 (top):   UI elements — score counter, timer, title bar
+Layer 4:         Leo mascot (with idle bounce animation)
+Layer 3:         Text — question, answer, fun fact (with per-element easing)
+Layer 2:         Main content — silhouette or reveal image (with entrance/exit easing)
+Layer 1 (bottom): Background gradient + particle overlay
+```
+
+Each layer is a separate clip with its own position, scale, and opacity animations.
+This allows smooth overlapping transitions — e.g., the silhouette exits while the
+reveal image enters, with a brief overlap creating a polished crossfade effect.
+
+### 2.6 Typography
 
 - **Title/headers:** Bold rounded sans-serif (Baloo 2 or Fredoka One) — playful, kid-friendly
-- **Question text:** White with dark stroke outline — readable on any background
-- **Answer text:** Category primary color, large, bold — celebratory feel
-- **Fun fact:** Slightly smaller, white, gentle fade-in
-- **Countdown numbers:** Extra bold, large (fills ~30% of frame), category color with white outline
+- **Question text:** White with dark stroke outline (3px) + drop shadow (2px offset, 50% opacity) — readable on any background
+- **Answer text:** Category primary color, large, bold, with white glow outline — celebratory feel
+- **Fun fact:** Slightly smaller, white, rounded background pill (semi-transparent black, 60% opacity) for readability
+- **Countdown numbers:** Extra bold, large (fills ~30% of frame), white with category-colored glow effect + subtle outer shadow
+- **All text:** Anti-aliased rendering, no jagged edges. Pillow's `font.getmask()` with `L` mode for smooth edges
 
 ---
 
@@ -325,32 +369,89 @@ Normalized to -3dB peak (same standard as Luminous Will).
 
 ## 7. Video Assembly (MoviePy)
 
-### 7.1 Short-Form Assembly
+### 7.1 Frame-by-Frame Rendering Approach
+
+Instead of stitching static images, we render each frame programmatically. This gives us
+per-frame control over every animation — position, scale, opacity, rotation — all driven
+by easing functions.
 
 ```python
-# Per round (~10s):
-silhouette_clip    = ImageClip(question_frame, duration=2.0)     # slide-in effect
-countdown_3        = ImageClip(countdown_3_frame, duration=1.0)  # bounce-scale
-countdown_2        = ImageClip(countdown_2_frame, duration=1.0)  # bounce-scale
-countdown_1        = ImageClip(countdown_1_frame, duration=1.0)  # bounce-scale
-reveal_clip        = ImageClip(reveal_frame, duration=2.0)       # pop-scale effect
-fun_fact_clip      = ImageClip(fact_frame, duration=2.5)         # word-by-word overlay
-transition         = TransitionClip(duration=0.3)                # whoosh wipe
+# Core rendering loop (simplified):
+def render_frame(t):
+    """Called 30 times per second. Returns a numpy frame array."""
+    frame = render_background(t, category_colors)      # gradient + hue shift
+    frame = composite_particles(frame, t)               # sparkle overlay
+    frame = composite_content(frame, t, round_data)     # silhouette or reveal with easing
+    frame = composite_text(frame, t, round_data)        # question/answer/fact with easing
+    frame = composite_mascot(frame, t, round_data)      # Leo with idle bounce + pose swap
+    frame = composite_ui(frame, t, round_data)          # score, timer, title bar
+    return frame
 
-# Concatenate all rounds + intro + outro
-# Add audio layers
-# Export: 1080x1920, 30fps, H.264
+# Each composite_* function reads `t` (current time) and applies the
+# appropriate easing curve to determine position/scale/opacity of its elements.
+# This means animations are mathematically smooth at any framerate.
 ```
 
-### 7.2 Long-Form Compilation
+**Key advantage:** Easing-driven rendering means we never see "jumpy" animations. Even at
+30fps, BackEaseOut and ElasticEaseOut produce buttery-smooth motion because each frame
+is calculated from a continuous mathematical function, not from pre-rendered keyframes.
 
-Weekly job that:
-1. Loads all completed short-form round assets from the week
-2. Adds section title cards ("Easy Round!", "Getting Harder!", "Expert Level!")
-3. Adds running score counter overlay
-4. Adds progress bar overlay
-5. Renders new intro/outro for compilation
-6. Exports: 1920x1080, 30fps, H.264, higher bitrate (8000k)
+### 7.2 Short-Form Assembly (60s, 9:16)
+
+```python
+# Timeline for 5-round short:
+# [0.0 - 2.0s]   Intro: Leo waves in + jingle + title slides down
+# [2.0 - 12.0s]  Round 1
+# [12.0 - 22.0s] Round 2
+# [22.0 - 32.0s] Round 3
+# [32.0 - 42.0s] Round 4
+# [42.0 - 52.0s] Round 5
+# [52.0 - 56.0s] Final score animation (all 5 answers flash by)
+# [56.0 - 60.0s] Outro: "Subscribe!" + Leo waves
+
+# Per round timeline (10s):
+# [0.0s] Silhouette slides in (CubicEaseOut, 0.4s)
+# [0.0s] Voice: "What animal is this?"
+# [2.0s] Countdown "3" pops in (BackEaseOut)
+# [3.0s] Countdown "2" pops in
+# [4.0s] Countdown "1" pops in
+# [5.0s] Silhouette exits + Reveal pops in (ElasticEaseOut, 0.5s)
+# [5.0s] Voice: "It's a Lion!" + ding SFX
+# [5.0s] Leo swaps to excited pose
+# [6.5s] Fun fact words appear one by one (synced to voice)
+# [9.0s] Score counter bounces up
+# [9.5s] Round transition (scale down + fade, 0.3s)
+
+video = VideoClip(render_frame, duration=60.0)
+video = video.with_fps(30)
+video = video.with_audio(mixed_audio)  # voice + SFX + music pre-mixed
+video.write_videofile("output.mp4", codec="libx264",
+                      bitrate="5000k",
+                      preset="slow",     # better compression quality
+                      audio_codec="aac",
+                      audio_bitrate="192k")
+```
+
+**Output:** 1080x1920, 30fps, H.264, 5000k bitrate, AAC 192k audio
+
+### 7.3 Long-Form Compilation (15-20 min, 16:9)
+
+Weekly job that re-renders rounds at 16:9 with additional UI elements:
+
+1. Loads all quiz packs + images from the past 7 days (35 rounds from 7 shorts)
+2. Generates 45-65 additional bonus rounds for long-form exclusivity
+3. Re-renders every round at 1920x1080 with:
+   - Running score counter (top-right, persistent)
+   - Progress bar (bottom, shows round X/80)
+   - Difficulty badge (star rating, top-left per round)
+4. Inserts section title cards with animated transitions:
+   - "Easy Round!" (green, stars fly in)
+   - "Getting Harder!" (orange, screen shake effect)
+   - "Expert Level!" (red, dramatic zoom)
+5. Final score reveal: big animated number with firework particle burst
+6. Renders new intro (10s) + outro (10s) with Leo
+
+**Output:** 1920x1080, 30fps, H.264, 8000k bitrate, AAC 192k audio
 
 ### 7.3 Thumbnail Generation
 
@@ -435,17 +536,18 @@ Gemini generates platform-optimized titles, descriptions, and tags per video. Pr
 ```
 LeoQuiz/
 ├── main.py                    # Orchestrator — runs full pipeline
-├── config.py                  # All settings, paths, API keys, colors
+├── config.py                  # All settings, paths, API keys, colors, easing presets
 ├── quiz_generator.py          # Gemini quiz pack generation
 ├── image_generator.py         # Gemini Imagen image generation
 ├── silhouette.py              # Pillow silhouette extraction
 ├── frame_composer.py          # Pillow frame composition (layouts, text, mascot)
+├── animations.py              # Easing-driven animation system (position, scale, opacity, particles)
 ├── narration.py               # ElevenLabs voice generation
 ├── audio_mixer.py             # Audio assembly (voice + SFX + music)
-├── video_assembler.py         # MoviePy video assembly with motion
+├── video_assembler.py         # MoviePy frame-by-frame renderer with compositing layers
 ├── thumbnail.py               # Auto thumbnail generation
 ├── metadata.py                # Gemini metadata generation
-├── compiler.py                # Weekly long-form compilation
+├── compiler.py                # Weekly long-form compilation (re-renders at 16:9)
 ├── uploader.py                # YouTube + TikTok upload
 ├── scheduler.py               # Cron scheduler
 ├── history.json               # Never-repeat tracking
@@ -486,7 +588,7 @@ LeoQuiz/
 | Silhouette extraction | Pillow | Free |
 | Frame composition | Pillow | Free |
 | Voice narration | ElevenLabs | Free tier (10K chars/month — ~15-20 videos, upgrade if daily) |
-| Video assembly | MoviePy | Free |
+| Video assembly | MoviePy + easing-functions | Free |
 | Background music | Pixabay/Freesound downloads | Free |
 | Sound effects | Pixabay/Freesound downloads | Free |
 | Fonts | Google Fonts (Baloo 2, Fredoka) | Free |
