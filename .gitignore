@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+output/shorts/
+output/longform/
+history.json
+*.mp4
+*.wav
+*.mp3
+.venv/
+.superpowers/
