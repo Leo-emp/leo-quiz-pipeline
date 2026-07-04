@@ -3,7 +3,21 @@ name: Daily Quiz Video Generation
 on:
   schedule:
     - cron: '0 6 * * *'  # Every day at 6:00 AM UTC
-  workflow_dispatch:       # Manual trigger
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: 'Dashboard video record ID'
+        required: false
+        type: string
+      category:
+        description: 'Quiz category (animals, dinosaurs, space, vehicles, fruits, flags)'
+        required: false
+        type: string
+      rounds:
+        description: 'Number of quiz rounds'
+        required: false
+        default: '5'
+        type: string
 
 jobs:
   generate:
@@ -24,14 +38,76 @@ jobs:
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      - name: Install Node.js (for Blob upload)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Run pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
-        run: python main.py
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.category }}" ]; then
+            ARGS="$ARGS --category ${{ inputs.category }}"
+          fi
+          if [ -n "${{ inputs.rounds }}" ]; then
+            ARGS="$ARGS --rounds ${{ inputs.rounds }}"
+          fi
+          python main.py $ARGS
 
-      - name: Upload artifact
+      - name: Find output directory
+        id: find_output
+        run: |
+          OUTPUT_DIR=$(ls -td output/shorts/*/ | head -1)
+          echo "dir=$OUTPUT_DIR" >> $GITHUB_OUTPUT
+
+      - name: Upload to Vercel Blob and notify dashboard
+        if: inputs.video_id != ''
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          DASHBOARD_WEBHOOK_SECRET: ${{ secrets.DASHBOARD_WEBHOOK_SECRET }}
+        run: |
+          OUTPUT_DIR="${{ steps.find_output.outputs.dir }}"
+          VIDEO_ID="${{ inputs.video_id }}"
+
+          # Upload video to Vercel Blob
+          VIDEO_URL=$(npx -y vercel-blob-upload "$OUTPUT_DIR/video.mp4" \
+            --content-type video/mp4 --token "$BLOB_READ_WRITE_TOKEN" 2>/dev/null | tail -1)
+
+          # Upload thumbnail to Vercel Blob
+          THUMB_URL=$(npx -y vercel-blob-upload "$OUTPUT_DIR/thumbnail.png" \
+            --content-type image/png --token "$BLOB_READ_WRITE_TOKEN" 2>/dev/null | tail -1)
+
+          # Read metadata
+          METADATA=$(cat "$OUTPUT_DIR/metadata_youtube.json")
+          TITLE=$(echo "$METADATA" | python -c "import sys,json; print(json.load(sys.stdin).get('title',''))")
+          DESCRIPTION=$(echo "$METADATA" | python -c "import sys,json; print(json.load(sys.stdin).get('description',''))")
+          TAGS=$(echo "$METADATA" | python -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('tags',[])))")
+          HASHTAGS=$(echo "$METADATA" | python -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('hashtags',[])))")
+
+          # Read quiz pack for full metadata
+          QUIZ_PACK=$(cat "$OUTPUT_DIR/quiz_pack.json")
+
+          # Notify dashboard webhook
+          curl -X POST "$DASHBOARD_URL/api/webhook/pipeline-complete" \
+            -H "Content-Type: application/json" \
+            -H "x-webhook-secret: $DASHBOARD_WEBHOOK_SECRET" \
+            -d "{
+              \"video_id\": \"$VIDEO_ID\",
+              \"video_url\": \"$VIDEO_URL\",
+              \"thumbnail_url\": \"$THUMB_URL\",
+              \"title\": \"$TITLE\",
+              \"description\": \"$DESCRIPTION\",
+              \"tags\": $TAGS,
+              \"hashtags\": $HASHTAGS,
+              \"metadata_json\": $QUIZ_PACK
+            }"
+
+      - name: Upload artifact (fallback)
         uses: actions/upload-artifact@v4
         with:
           name: quiz-video-${{ github.run_number }}
