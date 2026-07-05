@@ -16,7 +16,12 @@ on:
       rounds:
         description: 'Number of quiz rounds'
         required: false
-        default: '5'
+        default: '6'
+        type: string
+      format:
+        description: 'Video format (short, long, mega)'
+        required: false
+        default: 'short'
         type: string
 
 jobs:
@@ -55,6 +60,9 @@ jobs:
           fi
           if [ -n "${{ inputs.rounds }}" ]; then
             ARGS="$ARGS --rounds ${{ inputs.rounds }}"
+          fi
+          if [ -n "${{ inputs.format }}" ]; then
+            ARGS="$ARGS --format ${{ inputs.format }}"
           fi
           python main.py $ARGS
 

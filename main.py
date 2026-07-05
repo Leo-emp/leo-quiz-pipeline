@@ -17,6 +17,7 @@ from silhouette import extract_silhouette, validate_silhouette
 from narration import generate_round_narration, RoundAudio
 from audio_mixer import build_short_audio
 from video_assembler import assemble_short
+from longform_assembler import assemble_longform
 from thumbnail import generate_thumbnail
 from metadata import generate_metadata, save_metadata
 from sfx_generator import ensure_all_sfx
@@ -26,25 +27,39 @@ from music_downloader import ensure_music
 
 
 def run_pipeline(category: str = None, num_rounds: int = None,
-                  output_dir: Path = None) -> Path:
+                  output_dir: Path = None, video_format: str = "short") -> Path:
     """
-    # Run the complete Leo Quiz pipeline for one short-form video.
+    # Run the complete Leo Quiz pipeline for one video.
+    # Supports 3 formats:
+    #   - "short": 6 rounds, 9:16 vertical (66s) — YouTube Shorts / TikTok / Reels
+    #   - "long":  60 rounds, 16:9 landscape (~10min) — YouTube long-form
+    #   - "mega":  100 rounds, 16:9 landscape (~15min) — weekly mega quiz
     # 8 steps: content → images → silhouettes → narration → audio → video → thumbnail → metadata
     # Returns path to the output video file.
     """
     # Default category from day-of-week rotation
     if category is None:
         category = config.get_today_category()
-    # Default 5 rounds per short
+
+    # Default rounds based on video format
     if num_rounds is None:
-        num_rounds = config.ROUNDS_PER_SHORT
-    # Default output dir: output/shorts/YYYY-MM-DD_category/
+        if video_format == "long":
+            num_rounds = config.LONGFORM_ROUNDS      # 60 rounds
+        elif video_format == "mega":
+            num_rounds = config.MEGA_ROUNDS           # 100 rounds
+        else:
+            num_rounds = config.ROUNDS_PER_SHORT      # 6 rounds
+
+    # Output directory: shorts/ for short, longform/ for long/mega
     if output_dir is None:
         date_str = datetime.now().strftime("%Y-%m-%d")
-        output_dir = config.SHORTS_DIR / f"{date_str}_{category}"
+        if video_format in ("long", "mega"):
+            output_dir = config.LONGFORM_DIR / f"{date_str}_{category}_{video_format}"
+        else:
+            output_dir = config.SHORTS_DIR / f"{date_str}_{category}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[LEO QUIZ] Starting pipeline: {category}, {num_rounds} rounds")
+    print(f"[LEO QUIZ] Starting pipeline: {category}, {num_rounds} rounds, format={video_format}")
     print(f"[LEO QUIZ] Output: {output_dir}")
 
     # --- Step 0a: Ensure custom fonts are available ---
@@ -76,6 +91,13 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     print("[LEO QUIZ] Step 1: Generating quiz content...")
     quiz_pack = generate_quiz_pack(category, num_rounds)
     print(f"[LEO QUIZ]   Generated {len(quiz_pack.rounds)} rounds")
+
+    # Sort rounds by difficulty for long-form/mega (top performer standard:
+    # implicit progression — easy first hooks kids, hard later adds challenge)
+    if video_format in ("long", "mega"):
+        difficulty_order = {"easy": 0, "medium": 1, "hard": 2}
+        quiz_pack.rounds.sort(key=lambda r: difficulty_order.get(r.difficulty, 1))
+
     for i, r in enumerate(quiz_pack.rounds):
         print(f"[LEO QUIZ]   Round {i+1}: {r.answer} ({r.difficulty})")
 
@@ -134,9 +156,20 @@ def run_pipeline(category: str = None, num_rounds: int = None,
 
     # --- Step 5: Mix audio (voice + SFX + music) ---
     print("[LEO QUIZ] Step 5: Mixing audio...")
-    total_duration = (config.INTRO_DURATION +
-                      num_rounds * config.ROUND_DURATION +
-                      config.OUTRO_DURATION)
+
+    # Calculate total duration based on video format
+    if video_format == "long":
+        total_duration = (config.LONGFORM_INTRO_DURATION +
+                          num_rounds * config.LONGFORM_ROUND_DURATION +
+                          config.LONGFORM_OUTRO_DURATION)
+    elif video_format == "mega":
+        total_duration = (config.MEGA_INTRO_DURATION +
+                          num_rounds * config.MEGA_ROUND_DURATION +
+                          config.MEGA_OUTRO_DURATION)
+    else:
+        total_duration = (config.INTRO_DURATION +
+                          num_rounds * config.ROUND_DURATION +
+                          config.OUTRO_DURATION)
 
     # Find a background music track
     music_path = _find_music_track(category)
@@ -147,8 +180,16 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     # --- Step 6: Assemble video (frame-by-frame rendering) ---
     print("[LEO QUIZ] Step 6: Assembling video...")
     video_path = output_dir / "video.mp4"
-    assemble_short(quiz_pack, image_paths, silhouette_paths,
-                    round_audios, audio_path, video_path)
+
+    if video_format in ("long", "mega"):
+        # 16:9 landscape assembler for long-form / mega quiz
+        assemble_longform(quiz_pack, image_paths, silhouette_paths,
+                           round_audios, audio_path, video_path,
+                           format_type=video_format)
+    else:
+        # 9:16 vertical assembler for shorts
+        assemble_short(quiz_pack, image_paths, silhouette_paths,
+                        round_audios, audio_path, video_path)
 
     # --- Step 7: Generate thumbnail ---
     print("[LEO QUIZ] Step 7: Generating thumbnail...")
@@ -156,14 +197,14 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     generate_thumbnail(quiz_pack, image_paths, silhouette_paths, thumb_path)
 
     # --- Step 8: Generate platform metadata ---
+    # Generate metadata for all 4 platforms (YouTube, TikTok, Instagram, Facebook)
     print("[LEO QUIZ] Step 8: Generating metadata...")
-    yt_meta = generate_metadata(quiz_pack, "youtube")
-    save_metadata(yt_meta, output_dir / "metadata_youtube.json")
-
-    tt_meta = generate_metadata(quiz_pack, "tiktok")
-    save_metadata(tt_meta, output_dir / "metadata_tiktok.json")
+    for platform in ("youtube", "tiktok", "instagram", "facebook"):
+        meta = generate_metadata(quiz_pack, platform)
+        save_metadata(meta, output_dir / f"metadata_{platform}.json")
 
     print(f"[LEO QUIZ] Pipeline complete! Video: {video_path}")
+    print(f"[LEO QUIZ] Format: {video_format}, Duration: ~{total_duration:.0f}s")
     return video_path
 
 
@@ -190,10 +231,14 @@ if __name__ == "__main__":
     parser.add_argument("--category", type=str, default=None,
                         help="Quiz category (animals, dinosaurs, space, vehicles, fruits, flags)")
     parser.add_argument("--rounds", type=int, default=None,
-                        help="Number of quiz rounds (default: 5)")
+                        help="Number of quiz rounds (default depends on format)")
+    parser.add_argument("--format", type=str, default="short",
+                        choices=["short", "long", "mega"],
+                        help="Video format: short (66s), long (~10min), mega (~15min)")
     parser.add_argument("--output", type=str, default=None,
                         help="Output directory path")
 
     args = parser.parse_args()
     output_dir = Path(args.output) if args.output else None
-    run_pipeline(category=args.category, num_rounds=args.rounds, output_dir=output_dir)
+    run_pipeline(category=args.category, num_rounds=args.rounds,
+                  output_dir=output_dir, video_format=args.format)
