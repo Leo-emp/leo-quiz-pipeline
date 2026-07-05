@@ -9,9 +9,10 @@ def test_render_gradient_background():
     from frame_composer import render_gradient_background
     img = render_gradient_background(1080, 1920, "animals", t=0.0)
     assert img.size == (1080, 1920)
-    assert img.mode == "RGB"
+    # Now returns RGBA (upgraded with radial highlight layer)
+    assert img.mode in ("RGB", "RGBA")
     # Top and bottom should be different colors (it's a gradient)
-    arr = np.array(img)
+    arr = np.array(img.convert("RGB"))
     top_pixel = arr[10, 540]
     bottom_pixel = arr[1910, 540]
     assert not np.array_equal(top_pixel, bottom_pixel)

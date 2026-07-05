@@ -17,7 +17,7 @@ def test_build_round_timeline():
 def test_render_frame_returns_array():
     """# render_frame should return a numpy array of the correct size."""
     from video_assembler import render_frame, VideoContext
-    # Create minimal context for testing
+    # Create minimal context for testing (includes themed_decorations)
     ctx = VideoContext(
         width=1080, height=1920,
         category="animals",
@@ -26,6 +26,7 @@ def test_render_frame_returns_array():
         silhouette_paths=[],
         mascot_images={},
         particle_system=None,
+        themed_decorations=None,
     )
     frame = render_frame(0.0, ctx)
     assert isinstance(frame, np.ndarray)

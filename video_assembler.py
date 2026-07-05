@@ -1,9 +1,11 @@
 # video_assembler.py
 # ============================================================
 # Frame-by-frame video renderer for Leo Quiz.
-# Every frame is computed from easing functions — no pre-rendered
-# keyframes. This produces buttery-smooth animation at any fps.
-# Uses 5-layer compositing: bg → content → text → mascot → UI
+# MASSIVELY UPGRADED from v1: now includes confetti bursts,
+# screen shake, Ken Burns zoom, glow text, rainbow reveals,
+# themed decorations, vignette, progress dots, and enhanced
+# intro/outro sequences. Every frame is computed from easing
+# functions — no pre-rendered keyframes.
 # ============================================================
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,7 +18,13 @@ from animations import (
     compute_slide_x, compute_bounce_y, ParticleSystem
 )
 from frame_composer import (
-    render_gradient_background, render_text, hex_to_rgb, _get_font
+    render_gradient_background, render_text, render_text_wrapped,
+    render_pill_background, hex_to_rgb, _get_font
+)
+from effects import (
+    ConfettiBurst, ScreenShake, KenBurnsZoom, GlowRing,
+    ProgressIndicator, ThemedDecorations,
+    render_glow_text, render_rainbow_text, apply_vignette
 )
 from quiz_generator import QuizRound, QuizPack
 from narration import RoundAudio
@@ -33,6 +41,8 @@ class VideoContext:
     silhouette_paths: list[Path]  # Paths to silhouette images
     mascot_images: dict      # {"thinking": Image, "excited": Image, ...}
     particle_system: ParticleSystem  # Sparkle overlay system
+    themed_decorations: ThemedDecorations  # Category-themed floating shapes
+    confetti_bursts: list[ConfettiBurst] = field(default_factory=list)
     round_audios: list[RoundAudio] = field(default_factory=list)
     timeline: list[dict] = field(default_factory=list)
 
@@ -45,20 +55,16 @@ def build_round_timeline(round_index: int, round_start: float) -> list[dict]:
     """
     t = round_start
     events = [
-        # Silhouette slides in, question text appears
         {"phase": "silhouette", "start": t + config.SILHOUETTE_START,
          "end": t + config.COUNTDOWN_START, "round": round_index},
-        # 3-2-1 countdown with pop-in numbers
         {"phase": "countdown_3", "start": t + config.COUNTDOWN_START,
          "end": t + config.COUNTDOWN_START + 1.0, "round": round_index, "number": 3},
         {"phase": "countdown_2", "start": t + config.COUNTDOWN_START + 1.0,
          "end": t + config.COUNTDOWN_START + 2.0, "round": round_index, "number": 2},
         {"phase": "countdown_1", "start": t + config.COUNTDOWN_START + 2.0,
          "end": t + config.REVEAL_START, "round": round_index, "number": 1},
-        # Answer reveal with elastic pop animation
         {"phase": "reveal", "start": t + config.REVEAL_START,
          "end": t + config.FUN_FACT_START, "round": round_index},
-        # Fun fact text appears
         {"phase": "fun_fact", "start": t + config.FUN_FACT_START,
          "end": t + config.ROUND_DURATION, "round": round_index},
     ]
@@ -102,7 +108,6 @@ def _get_current_event(t: float, timeline: list[dict]) -> dict:
     for event in timeline:
         if event["start"] <= t < event["end"]:
             return event
-    # Default to last event if past end
     return timeline[-1] if timeline else {"phase": "intro", "start": 0, "end": 0, "round": -1}
 
 
@@ -116,22 +121,17 @@ def _composite_image_on_frame(frame_img: Image.Image, overlay: Image.Image,
     if scale <= 0 or opacity <= 0:
         return frame_img
 
-    # Scale the overlay image
     new_w = max(1, int(overlay.width * scale))
     new_h = max(1, int(overlay.height * scale))
     scaled = overlay.resize((new_w, new_h), Image.LANCZOS)
 
-    # Apply opacity by modifying alpha channel
     if opacity < 1.0:
         arr = np.array(scaled)
         arr[:, :, 3] = (arr[:, :, 3] * opacity).astype(np.uint8)
         scaled = Image.fromarray(arr)
 
-    # Calculate paste position (centered on given coordinates)
     paste_x = center_x - new_w // 2
     paste_y = center_y - new_h // 2
-
-    # Paste with alpha compositing
     frame_img.paste(scaled, (paste_x, paste_y), scaled)
     return frame_img
 
@@ -139,17 +139,34 @@ def _composite_image_on_frame(frame_img: Image.Image, overlay: Image.Image,
 def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
     """
     # Render a single video frame at time t.
-    # This is called 30 times per second by MoviePy.
+    # Called 30 times per second by MoviePy.
     # Returns a numpy array (H, W, 3) in RGB format.
-    # All animation is computed from easing functions — no keyframes.
+    #
+    # UPGRADED rendering pipeline:
+    # 1. Gradient background with radial highlight
+    # 2. Themed decorations (category-specific shapes)
+    # 3. Sparkle particles
+    # 4. Content (silhouette/reveal image)
+    # 5. Glow ring around silhouette
+    # 6. Text (glow countdown, rainbow answer, wrapped facts)
+    # 7. Confetti burst on reveals
+    # 8. Progress indicator dots
+    # 9. Mascot with idle bounce
+    # 10. Vignette overlay
+    # 11. Screen shake (if active)
+    # 12. Ken Burns zoom (if in silhouette phase)
     """
     w, h = ctx.width, ctx.height
 
-    # --- Layer 1: Background gradient + particle overlay ---
+    # --- Layer 1: Background gradient ---
     bg = render_gradient_background(w, h, ctx.category, t)
     frame = bg.convert("RGBA")
 
-    # Add floating sparkle particles for premium depth
+    # --- Layer 2: Themed decorations (floating shapes behind content) ---
+    if ctx.themed_decorations:
+        frame = ctx.themed_decorations.render(frame, t)
+
+    # --- Layer 3: Sparkle particles ---
     if ctx.particle_system:
         frame_arr = np.array(frame)[:, :, :3]
         frame_arr = ctx.particle_system.render(frame_arr, t)
@@ -158,81 +175,154 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
             np.concatenate([frame_arr, alpha], axis=2)
         )
 
-    # Find current timeline event for this frame
+    # Find current timeline event
     event = _get_current_event(t, ctx.timeline)
     phase = event["phase"]
     round_idx = event["round"]
 
-    # --- Intro: title + mascot waving in ---
+    # ===================================================================
+    # INTRO: animated title + mascot + particles burst
+    # ===================================================================
     if phase == "intro":
+        intro_elapsed = t - event["start"]
+        intro_duration = event["end"] - event["start"]
+
+        # Title text pops in with elastic bounce
+        title_scale = compute_scale(intro_elapsed, 0.0, 0.6, "elastic_out")
         cat_display = config.CATEGORIES[ctx.category]["display"]
-        frame = render_text(frame, f"GUESS THE {cat_display.upper()}!",
-                            position=(w // 2, int(h * 0.35)),
-                            font_size=config.TITLE_FONT_SIZE + 20,
-                            color=(255, 255, 255))
-        # Mascot waves in with BackEaseOut pop
+        title_text = f"GUESS THE {cat_display.upper()}!"
+        title_size = int((config.TITLE_FONT_SIZE + 20) * max(0.1, title_scale))
+
+        # Title with glow effect
+        frame = render_glow_text(frame, title_text,
+                                 position=(w // 2, int(h * 0.30)),
+                                 font_size=title_size,
+                                 glow_color=hex_to_rgb(
+                                     config.CATEGORY_COLORS[ctx.category]["primary"]
+                                 ))
+
+        # Subtitle fades in after title
+        sub_opacity = compute_opacity(intro_elapsed, 0.4, 0.4, "quad_out")
+        if sub_opacity > 0.01:
+            frame = render_text(frame, f"{len(ctx.rounds)} Rounds!",
+                                position=(w // 2, int(h * 0.42)),
+                                font_size=config.CTA_FONT_SIZE,
+                                color=(255, 255, 200))
+
+        # Mascot waves in with BackEaseOut pop from bottom
         if "waving" in ctx.mascot_images:
             mascot = ctx.mascot_images["waving"]
-            scale = compute_scale(t, 0.0, 0.5, "back_out")
-            mascot_h = int(h * 0.25)
+            mascot_scale = compute_scale(intro_elapsed, 0.2, 0.5, "back_out")
+            mascot_h = int(h * 0.30)
             mascot_w = int(mascot.width * (mascot_h / mascot.height))
             mascot_resized = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+            # Slide up from below frame
+            mascot_y = int(h * 0.65 + (1 - mascot_scale) * h * 0.3)
             frame = _composite_image_on_frame(
-                frame, mascot_resized, w // 2, int(h * 0.65), scale=scale
+                frame, mascot_resized, w // 2, mascot_y, scale=min(1.0, mascot_scale)
             )
+
+        # Apply vignette for cinematic depth
+        frame = apply_vignette(frame, config.VIGNETTE_INTENSITY)
         return np.array(frame.convert("RGB"))
 
-    # --- Outro: score recap + subscribe CTA ---
+    # ===================================================================
+    # OUTRO: score recap + subscribe CTA + mascot celebration
+    # ===================================================================
     if phase == "outro":
-        frame = render_text(frame, "How many did you get?",
-                            position=(w // 2, int(h * 0.35)),
-                            font_size=config.TITLE_FONT_SIZE,
-                            color=(255, 255, 255))
-        frame = render_text(frame, "Subscribe for more!",
-                            position=(w // 2, int(h * 0.50)),
-                            font_size=config.QUESTION_FONT_SIZE,
-                            color=(255, 255, 200))
-        if "waving" in ctx.mascot_images:
-            mascot = ctx.mascot_images["waving"]
+        outro_elapsed = t - event["start"]
+
+        # "How many did you get?" bounces in
+        score_text_scale = compute_scale(outro_elapsed, 0.0, 0.5, "back_out")
+        if score_text_scale > 0.01:
+            frame = render_glow_text(frame, "How many did you get?",
+                                     position=(w // 2, int(h * 0.25)),
+                                     font_size=int(config.TITLE_FONT_SIZE * max(0.1, score_text_scale)),
+                                     glow_color=(255, 200, 50))
+
+        # Score display (big number)
+        score_display = f"{len(ctx.rounds)}/{len(ctx.rounds)}"
+        score_scale = compute_scale(outro_elapsed, 0.3, 0.5, "elastic_out")
+        if score_scale > 0.01:
+            frame = render_glow_text(frame, score_display,
+                                     position=(w // 2, int(h * 0.40)),
+                                     font_size=int(100 * max(0.1, score_scale)),
+                                     glow_color=(50, 255, 100))
+
+        # Subscribe CTA fades in
+        cta_opacity = compute_opacity(outro_elapsed, 1.0, 0.5, "quad_out")
+        if cta_opacity > 0.01:
+            frame = render_text(frame, "SUBSCRIBE for more quizzes!",
+                                position=(w // 2, int(h * 0.58)),
+                                font_size=config.CTA_FONT_SIZE,
+                                color=(255, 255, 100))
+            # Like + Comment reminder
+            frame = render_text(frame, "Like & Comment your score!",
+                                position=(w // 2, int(h * 0.66)),
+                                font_size=config.ROUND_LABEL_FONT_SIZE,
+                                color=(255, 255, 255))
+
+        # Mascot celebration with bounce
+        if "excited" in ctx.mascot_images:
+            mascot = ctx.mascot_images["excited"]
             mascot_h = int(h * 0.25)
             mascot_w = int(mascot.width * (mascot_h / mascot.height))
             mascot_resized = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+            bounce = compute_bounce_y(t, amplitude=8.0, period=0.6)
             frame = _composite_image_on_frame(
-                frame, mascot_resized, w // 2, int(h * 0.75)
+                frame, mascot_resized, w // 2, int(h * 0.82) + int(bounce)
             )
+
+        # Confetti during outro
+        for burst in ctx.confetti_bursts:
+            frame = burst.render(frame, t)
+
+        frame = apply_vignette(frame, config.VIGNETTE_INTENSITY)
         return np.array(frame.convert("RGB"))
 
-    # --- Quiz round phases ---
+    # ===================================================================
+    # QUIZ ROUND PHASES
+    # ===================================================================
     if round_idx < 0 or round_idx >= len(ctx.rounds):
         return np.array(frame.convert("RGB"))
 
     round_data = ctx.rounds[round_idx]
-    score = round_idx  # Score = how many rounds already revealed
+    score = round_idx  # Score = completed rounds
     total = len(ctx.rounds)
     round_start = config.INTRO_DURATION + round_idx * config.ROUND_DURATION
     elapsed_in_round = t - round_start
 
-    # Persistent UI: score counter at bottom
-    frame = render_text(frame, f"Score: {score}/{total}",
-                        position=(w // 2, int(h * 0.90)),
-                        font_size=config.SCORE_FONT_SIZE)
-
-    # Persistent UI: title bar at top
+    # Get category colors
     cat_display = config.CATEGORIES[ctx.category]["display"]
     colors = config.CATEGORY_COLORS[ctx.category]
+    primary_rgb = hex_to_rgb(colors["primary"])
+
+    # --- Persistent UI: Title bar at top ---
     frame = render_text(frame, f"GUESS THE {cat_display.upper()}",
                         position=(w // 2, int(h * 0.06)),
                         font_size=config.TITLE_FONT_SIZE,
-                        color=hex_to_rgb(colors["primary"]))
+                        color=primary_rgb)
+
+    # --- Persistent UI: Round label below title ---
+    frame = render_text(frame, f"Round {round_idx + 1}/{total}",
+                        position=(w // 2, int(h * 0.12)),
+                        font_size=config.ROUND_LABEL_FONT_SIZE,
+                        color=(255, 255, 255), stroke_width=2)
 
     # Content area dimensions
     content_size = int(w * 0.5)
     content_center_x = w // 2
     content_center_y = int(h * 0.35)
 
-    # --- Silhouette + countdown phases ---
+    # ---------------------------------------------------------------
+    # SILHOUETTE + COUNTDOWN PHASES
+    # ---------------------------------------------------------------
     if phase in ("silhouette", "countdown_3", "countdown_2", "countdown_1"):
-        # Show silhouette with slide-in animation from left
+        # Glow ring behind silhouette — pulsing category-colored circle
+        frame = GlowRing.render(frame, content_center_x, content_center_y,
+                                int(content_size * 0.6), primary_rgb, t)
+
+        # Show silhouette with slide-in animation
         if round_idx < len(ctx.silhouette_paths):
             sil = Image.open(ctx.silhouette_paths[round_idx]).convert("RGBA")
             sil = sil.resize((content_size, content_size), Image.LANCZOS)
@@ -244,16 +334,24 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
             sil_x = int(-content_size + (content_center_x + content_size) * slide_progress)
             frame = _composite_image_on_frame(frame, sil, sil_x, content_center_y)
 
-        # Question hint text fades in
+        # Question hint text fades in (word-wrapped for long questions)
         q_opacity = compute_opacity(
             elapsed_in_round, 0.2, config.EASE_TEXT_IN, "quad_out"
         )
         if q_opacity > 0.01:
-            frame = render_text(frame, round_data.hint_question,
-                                position=(w // 2, int(h * 0.62)),
-                                font_size=config.QUESTION_FONT_SIZE)
+            # Pill background behind question text
+            frame = render_pill_background(
+                frame, round_data.hint_question,
+                (w // 2, int(h * 0.62)), config.QUESTION_FONT_SIZE,
+                bg_opacity=120
+            )
+            frame = render_text_wrapped(frame, round_data.hint_question,
+                                        position=(w // 2, int(h * 0.62)),
+                                        font_size=config.QUESTION_FONT_SIZE)
 
-    # --- Countdown number pop ---
+    # ---------------------------------------------------------------
+    # COUNTDOWN NUMBER POP — with GLOW effect
+    # ---------------------------------------------------------------
     if phase.startswith("countdown_"):
         number = event.get("number", 3)
         countdown_elapsed = t - event["start"]
@@ -262,20 +360,33 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
             countdown_elapsed, 0.0, config.EASE_COUNTDOWN_IN, "back_out"
         )
         scaled_font_size = int(config.COUNTDOWN_FONT_SIZE * max(0.1, num_scale))
-        frame = render_text(frame, str(number),
-                            position=(w // 2, int(h * 0.55)),
-                            font_size=scaled_font_size,
-                            color=(255, 255, 255),
-                            stroke_color=hex_to_rgb(colors["primary"]),
-                            stroke_width=6)
 
-    # --- Reveal phase: show answer ---
+        # Glow text for countdown numbers — bright and dramatic
+        glow_color = primary_rgb
+        if number == 1:
+            glow_color = (255, 50, 50)  # Red glow on "1" for tension
+
+        frame = render_glow_text(frame, str(number),
+                                 position=(w // 2, int(h * 0.55)),
+                                 font_size=scaled_font_size,
+                                 glow_color=glow_color,
+                                 glow_radius=config.GLOW_RADIUS)
+
+        # Screen shake on countdown "1" — builds tension
+        if number == 1 and countdown_elapsed > 0.3:
+            frame = ScreenShake.apply(frame, t, event["start"] + 0.3,
+                                       duration=0.2, intensity=6.0)
+
+    # ---------------------------------------------------------------
+    # REVEAL PHASE — answer with rainbow text + confetti
+    # ---------------------------------------------------------------
     if phase == "reveal":
+        reveal_elapsed = elapsed_in_round - config.REVEAL_START
+
+        # Full color image pops in with ElasticEaseOut
         if round_idx < len(ctx.image_paths):
             img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
             img = img.resize((content_size, content_size), Image.LANCZOS)
-            # ElasticEaseOut pop — image bounces in dramatically
-            reveal_elapsed = elapsed_in_round - config.REVEAL_START
             img_scale = compute_scale(
                 reveal_elapsed, 0.0, config.EASE_REVEAL, "elastic_out"
             )
@@ -283,22 +394,33 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
                 frame, img, content_center_x, content_center_y, scale=img_scale
             )
 
-        # Answer text pops in with BackEaseOut
-        answer_elapsed = elapsed_in_round - config.REVEAL_START
+        # Answer text — rainbow gradient for excitement
         answer_scale = compute_scale(
-            answer_elapsed, 0.1, config.EASE_ANSWER_IN, "back_out"
+            reveal_elapsed, 0.1, config.EASE_ANSWER_IN, "back_out"
         )
         if answer_scale > 0.01:
             ans_font = int(config.ANSWER_FONT_SIZE * max(0.1, answer_scale))
-            frame = render_text(frame, f"It's a {round_data.answer}!",
-                                position=(w // 2, int(h * 0.62)),
-                                font_size=ans_font,
-                                color=hex_to_rgb(colors["primary"]),
-                                stroke_color=(255, 255, 255))
+            frame = render_rainbow_text(
+                frame, f"It's a {round_data.answer}!",
+                position=(w // 2, int(h * 0.62)),
+                font_size=ans_font, t=t
+            )
 
-    # --- Fun fact phase ---
+        # Confetti burst — all bursts render if active
+        for burst in ctx.confetti_bursts:
+            frame = burst.render(frame, t)
+
+        # Screen shake on reveal — dramatic camera effect
+        frame = ScreenShake.apply(frame, t,
+                                   round_start + config.REVEAL_START,
+                                   duration=config.SHAKE_DURATION,
+                                   intensity=config.SHAKE_INTENSITY)
+
+    # ---------------------------------------------------------------
+    # FUN FACT PHASE — keep image + answer, add fact
+    # ---------------------------------------------------------------
     if phase == "fun_fact":
-        # Keep reveal image visible
+        # Keep reveal image visible (no animation — static)
         if round_idx < len(ctx.image_paths):
             img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
             img = img.resize((content_size, content_size), Image.LANCZOS)
@@ -308,61 +430,94 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
 
         # Answer text stays visible
         frame = render_text(frame, f"It's a {round_data.answer}!",
-                            position=(w // 2, int(h * 0.62)),
+                            position=(w // 2, int(h * 0.60)),
                             font_size=config.ANSWER_FONT_SIZE,
-                            color=hex_to_rgb(colors["primary"]),
+                            color=primary_rgb,
                             stroke_color=(255, 255, 255))
 
-        # Fun fact fades in with pill background
+        # Fun fact fades in — word-wrapped with pill background
         fact_elapsed = elapsed_in_round - config.FUN_FACT_START
         fact_opacity = compute_opacity(fact_elapsed, 0.0, 0.3, "quad_out")
         if fact_opacity > 0.01:
             fact_y = int(h * 0.74)
-            # Semi-transparent rounded rectangle behind fact text
-            pill_layer = Image.new("RGBA", frame.size, (0, 0, 0, 0))
-            pill_draw = ImageDraw.Draw(pill_layer)
-            font = _get_font(config.FACT_FONT_SIZE)
-            bbox = font.getbbox(round_data.fun_fact)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            pad = 20
-            pill_draw.rounded_rectangle([
-                w // 2 - text_w // 2 - pad, fact_y - text_h // 2 - pad // 2,
-                w // 2 + text_w // 2 + pad, fact_y + text_h // 2 + pad // 2,
-            ], radius=15, fill=(0, 0, 0, int(153 * fact_opacity)))
-            frame = Image.alpha_composite(frame, pill_layer)
+            # Pill background for readability
+            frame = render_pill_background(
+                frame, round_data.fun_fact,
+                (w // 2, fact_y), config.FACT_FONT_SIZE,
+                bg_opacity=int(170 * fact_opacity)
+            )
+            # Word-wrapped fact text
+            frame = render_text_wrapped(frame, round_data.fun_fact,
+                                        position=(w // 2, fact_y),
+                                        font_size=config.FACT_FONT_SIZE,
+                                        stroke_width=0, shadow=False)
 
-            frame = render_text(frame, round_data.fun_fact,
-                                position=(w // 2, fact_y),
-                                font_size=config.FACT_FONT_SIZE,
-                                stroke_width=0, shadow=False)
+        # Confetti continues during fun fact
+        for burst in ctx.confetti_bursts:
+            frame = burst.render(frame, t)
 
-    # --- Layer 4: Leo mascot with idle bounce ---
-    # Thinking pose during question, excited pose during reveal/fact
+    # ---------------------------------------------------------------
+    # PERSISTENT LAYER: Progress indicator dots
+    # ---------------------------------------------------------------
+    frame = ProgressIndicator.render(frame, round_idx, total, t,
+                                     color=primary_rgb, y_position=0.94)
+
+    # ---------------------------------------------------------------
+    # PERSISTENT LAYER: Score counter
+    # ---------------------------------------------------------------
+    # Score updates with bounce on reveal
+    displayed_score = score
+    if phase in ("reveal", "fun_fact"):
+        displayed_score = score + 1  # Show updated score after reveal
+
+    score_y = int(h * 0.88)
+    # Score pill background
+    frame = render_pill_background(frame, f"Score: {displayed_score}/{total}",
+                                   (w // 2, score_y), config.SCORE_FONT_SIZE,
+                                   padding=15, bg_opacity=100)
+    frame = render_text(frame, f"Score: {displayed_score}/{total}",
+                        position=(w // 2, score_y),
+                        font_size=config.SCORE_FONT_SIZE)
+
+    # ---------------------------------------------------------------
+    # PERSISTENT LAYER: Leo mascot with idle bounce + pose swap
+    # ---------------------------------------------------------------
     mascot_pose = "thinking" if phase in ("silhouette", "countdown_3", "countdown_2", "countdown_1") else "excited"
     if mascot_pose in ctx.mascot_images:
         mascot = ctx.mascot_images[mascot_pose]
-        mascot_h = int(h * 0.12)
+        mascot_h = int(h * 0.13)
         mascot_w = int(mascot.width * (mascot_h / mascot.height))
         mascot_resized = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
 
-        # Idle bounce — gentle up/down bobbing
-        bounce_y = compute_bounce_y(t, amplitude=3.0, period=1.2)
+        # Idle bounce — gentle bobbing
+        bounce_y = compute_bounce_y(t, amplitude=4.0, period=1.0)
         mascot_x = w - mascot_w // 2 - 40
-        mascot_y = h - mascot_h // 2 - 40 + int(bounce_y)
+        mascot_y = h - mascot_h // 2 - 60 + int(bounce_y)
 
-        # Scale pulse on reveal moment
+        # Scale pulse on reveal — mascot gets excited
         m_scale = 1.0
         if phase == "reveal":
             reveal_elapsed = elapsed_in_round - config.REVEAL_START
-            if reveal_elapsed < 0.3:
-                m_scale = 1.0 + 0.1 * compute_scale(
-                    reveal_elapsed, 0.0, 0.3, "back_out"
+            if reveal_elapsed < 0.4:
+                m_scale = 1.0 + 0.15 * compute_scale(
+                    reveal_elapsed, 0.0, 0.4, "back_out"
                 )
 
         frame = _composite_image_on_frame(
             frame, mascot_resized, mascot_x, mascot_y, scale=m_scale
         )
+
+    # ---------------------------------------------------------------
+    # POST-PROCESSING: Vignette + Ken Burns zoom
+    # ---------------------------------------------------------------
+    # Apply vignette for cinematic depth on all frames
+    frame = apply_vignette(frame, config.VIGNETTE_INTENSITY)
+
+    # Ken Burns zoom during silhouette phase — slow push-in
+    if phase == "silhouette":
+        frame = KenBurnsZoom.apply(frame, t, round_start,
+                                    config.SILHOUETTE_DURATION + config.COUNTDOWN_START,
+                                    config.ZOOM_MAX)
 
     return np.array(frame.convert("RGB"))
 
@@ -374,14 +529,13 @@ def assemble_short(quiz_pack: QuizPack, image_paths: list[Path],
                     mascot_dir: Path = None) -> Path:
     """
     # Assemble a complete short-form quiz video (60s, 9:16).
-    # Uses frame-by-frame rendering with easing-driven animation.
-    # MoviePy calls render_frame() 30 times per second.
+    # UPGRADED: now creates confetti bursts, themed decorations,
+    # and uses all premium visual effects automatically.
     """
     from moviepy import VideoClip, AudioFileClip
 
     w, h = config.SHORTS_SIZE
     num_rounds = len(quiz_pack.rounds)
-    # Total duration: intro + all rounds + outro
     total_duration = config.INTRO_DURATION + num_rounds * config.ROUND_DURATION + config.OUTRO_DURATION
 
     # Load mascot images (pre-generated PNG poses)
@@ -392,13 +546,36 @@ def assemble_short(quiz_pack: QuizPack, image_paths: list[Path],
         if pose_path.exists():
             mascot_images[pose_name] = Image.open(pose_path).convert("RGBA")
 
-    # Build complete timeline of all events
+    # Build complete timeline
     timeline = build_full_timeline(num_rounds)
 
     # Create particle system for sparkle overlay
     particles = ParticleSystem(w, h, count=config.PARTICLE_COUNT)
 
-    # Build video context — everything the renderer needs
+    # Create themed decorations based on quiz category
+    decorations = ThemedDecorations(quiz_pack.category, w, h)
+
+    # Pre-create confetti bursts for each reveal moment + outro
+    confetti_bursts = []
+    for i in range(num_rounds):
+        reveal_time = config.INTRO_DURATION + i * config.ROUND_DURATION + config.REVEAL_START
+        burst = ConfettiBurst(
+            center_x=w // 2, center_y=int(h * 0.35),
+            trigger_time=reveal_time,
+            count=config.CONFETTI_COUNT,
+            seed=i * 100  # Different pattern for each round
+        )
+        confetti_bursts.append(burst)
+
+    # Outro confetti — extra celebration at the end
+    outro_start = config.INTRO_DURATION + num_rounds * config.ROUND_DURATION
+    confetti_bursts.append(ConfettiBurst(
+        center_x=w // 2, center_y=int(h * 0.30),
+        trigger_time=outro_start + 0.3,
+        count=80, seed=999
+    ))
+
+    # Build video context with all effect systems
     ctx = VideoContext(
         width=w, height=h,
         category=quiz_pack.category,
@@ -407,6 +584,8 @@ def assemble_short(quiz_pack: QuizPack, image_paths: list[Path],
         silhouette_paths=silhouette_paths,
         mascot_images=mascot_images,
         particle_system=particles,
+        themed_decorations=decorations,
+        confetti_bursts=confetti_bursts,
         round_audios=round_audios,
         timeline=timeline,
     )

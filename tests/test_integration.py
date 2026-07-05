@@ -74,6 +74,7 @@ def test_video_context_creation(tmp_path):
         silhouette_paths=[sil_path],
         mascot_images={},
         particle_system=ParticleSystem(1080, 1920, count=5),
+        themed_decorations=None,
         timeline=timeline,
     )
 
@@ -116,6 +117,7 @@ def test_render_frame_with_round_data(tmp_path):
         silhouette_paths=[sil_path],
         mascot_images={},
         particle_system=ParticleSystem(1080, 1920, count=5),
+        themed_decorations=None,
         timeline=timeline,
     )
 
