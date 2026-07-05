@@ -115,61 +115,97 @@ def compute_bounce_y(t: float, amplitude: float = 3.0,
 class ParticleSystem:
     """
     # Generates and renders sparkle/star particles floating across the background.
-    # Each particle drifts slowly with random size, opacity, and speed.
+    # UPGRADED: 4-point star shapes, multiple warm colors, larger size range,
+    # individual rotation, and a central bright core for each sparkle.
     # Creates the "premium animation" feel seen in top kids content.
     """
 
-    def __init__(self, width: int, height: int, count: int = 20, seed: int = 42):
-        # Seed for reproducibility (same particles each render)
+    # Sparkle color palette — warm golds, whites, and soft pastels
+    SPARKLE_COLORS = [
+        np.array([255, 250, 220], dtype=np.float32),  # Warm white
+        np.array([255, 230, 150], dtype=np.float32),  # Gold
+        np.array([255, 200, 200], dtype=np.float32),  # Soft pink
+        np.array([200, 230, 255], dtype=np.float32),  # Ice blue
+        np.array([220, 255, 220], dtype=np.float32),  # Mint
+    ]
+
+    def __init__(self, width: int, height: int, count: int = 30, seed: int = 42):
         rng = random.Random(seed)
         self.width = width
         self.height = height
 
-        # Generate particle properties — each has position, size, opacity, drift speed
+        # Generate particle properties with more variety
         self.particles = []
         for _ in range(count):
             self.particles.append({
-                "x": rng.uniform(0, width),       # Initial X position
-                "y": rng.uniform(0, height),      # Initial Y position
-                "size": rng.randint(2, 6),         # Sparkle radius in pixels
-                "opacity": rng.uniform(0.2, 0.6),  # Base opacity
-                "speed_x": rng.uniform(-15, 15),   # Horizontal drift (px/sec)
-                "speed_y": rng.uniform(-20, -5),    # Vertical drift (upward)
-                "phase": rng.uniform(0, 2 * math.pi),  # Twinkle phase offset
+                "x": rng.uniform(0, width),
+                "y": rng.uniform(0, height),
+                "size": rng.randint(2, 8),          # Wider size range
+                "opacity": rng.uniform(0.15, 0.55),
+                "speed_x": rng.uniform(-12, 12),
+                "speed_y": rng.uniform(-18, -3),     # Upward drift
+                "phase": rng.uniform(0, 2 * math.pi),
+                "twinkle_speed": rng.uniform(2.0, 5.0),  # Individual twinkle rate
+                "color_idx": rng.randint(0, len(self.SPARKLE_COLORS) - 1),
+                "is_star": rng.random() > 0.4,       # 60% are star-shaped
             })
 
     def render(self, frame: np.ndarray, t: float) -> np.ndarray:
         """
         # Composite sparkle particles onto the frame at time t.
-        # Particles drift and twinkle (opacity oscillates with sine wave).
-        # Returns the modified frame (copy, does not mutate input).
+        # UPGRADED: renders 4-point star shapes with bright core,
+        # using multiple colors and individual twinkle rates.
         """
         result = frame.copy()
 
         for p in self.particles:
-            # Calculate current position (wraps around edges for infinite drift)
             x = int((p["x"] + p["speed_x"] * t) % self.width)
             y = int((p["y"] + p["speed_y"] * t) % self.height)
             size = p["size"]
 
-            # Twinkle effect: oscillate opacity with sine wave
-            twinkle = 0.5 + 0.5 * math.sin(t * 3.0 + p["phase"])
+            # Individual twinkle rate — each sparkle blinks independently
+            twinkle = 0.5 + 0.5 * math.sin(t * p["twinkle_speed"] + p["phase"])
             opacity = p["opacity"] * twinkle
+            if opacity < 0.02:
+                continue
 
-            # Sparkle color: warm white/gold for a magical feel
-            color = np.array([255, 250, 220], dtype=np.float32)
+            color = self.SPARKLE_COLORS[p["color_idx"]]
 
-            # Bounds checking — ensure we don't draw outside frame
-            y1 = max(0, y - size)
-            y2 = min(self.height, y + size)
-            x1 = max(0, x - size)
-            x2 = min(self.width, x + size)
-
-            if y2 > y1 and x2 > x1:
-                # Alpha-blend sparkle onto frame region
-                region = result[y1:y2, x1:x2].astype(np.float32)
-                sparkle = np.full_like(region, color, dtype=np.float32)
-                blended = region * (1 - opacity) + sparkle * opacity
-                result[y1:y2, x1:x2] = blended.astype(np.uint8)
+            if p["is_star"] and size >= 3:
+                # Draw 4-point star: horizontal + vertical cross
+                # Vertical arm
+                for dy in range(-size, size + 1):
+                    py = y + dy
+                    if 0 <= py < self.height and 0 <= x < self.width:
+                        # Brightness falls off toward tips
+                        arm_opacity = opacity * (1 - abs(dy) / size)
+                        pixel = result[py, x].astype(np.float32)
+                        result[py, x] = (pixel * (1 - arm_opacity) + color * arm_opacity).astype(np.uint8)
+                # Horizontal arm
+                for dx in range(-size, size + 1):
+                    px = x + dx
+                    if 0 <= y < self.height and 0 <= px < self.width:
+                        arm_opacity = opacity * (1 - abs(dx) / size)
+                        pixel = result[y, px].astype(np.float32)
+                        result[y, px] = (pixel * (1 - arm_opacity) + color * arm_opacity).astype(np.uint8)
+                # Bright core (2x2 center)
+                for dy in range(-1, 2):
+                    for dx in range(-1, 2):
+                        py, px = y + dy, x + dx
+                        if 0 <= py < self.height and 0 <= px < self.width:
+                            core_opacity = min(1.0, opacity * 1.5)
+                            pixel = result[py, px].astype(np.float32)
+                            result[py, px] = (pixel * (1 - core_opacity) + color * core_opacity).astype(np.uint8)
+            else:
+                # Simple dot sparkle (original style for smaller particles)
+                y1 = max(0, y - size)
+                y2 = min(self.height, y + size)
+                x1 = max(0, x - size)
+                x2 = min(self.width, x + size)
+                if y2 > y1 and x2 > x1:
+                    region = result[y1:y2, x1:x2].astype(np.float32)
+                    sparkle = np.full_like(region, color, dtype=np.float32)
+                    blended = region * (1 - opacity) + sparkle * opacity
+                    result[y1:y2, x1:x2] = blended.astype(np.uint8)
 
         return result

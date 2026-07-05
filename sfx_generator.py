@@ -437,6 +437,249 @@ def generate_bgm(path: Path, duration: float = 30.0):
 
 
 # ============================================================
+# Category-specific BGM — each quiz category gets its own vibe
+# ============================================================
+
+# Musical signatures per category: key root, scale, BPM, timbre
+CATEGORY_MUSIC = {
+    "animals": {
+        "bpm": 115,
+        # A minor pentatonic — warm, nature-like feel
+        "chords": [
+            [220.00, 261.63, 329.63],  # Am: A3, C4, E4
+            [261.63, 329.63, 392.00],  # C:  C4, E4, G4
+            [196.00, 246.94, 293.66],  # G:  G3, B3, D4
+            [174.61, 220.00, 261.63],  # F:  F3, A3, C4
+        ],
+        "bass": [110.00, 130.81, 98.00, 87.31],
+        "melody": [523.25, 587.33, 659.25, 783.99, 880.00],
+        "hat_rate": 2,      # Relaxed hi-hat pace
+        "pad_vol": 0.07,    # Soft nature pad
+        "bass_vol": 0.10,
+    },
+    "dinosaurs": {
+        "bpm": 100,
+        # D minor — dramatic, prehistoric tension
+        "chords": [
+            [146.83, 174.61, 220.00],  # Dm: D3, F3, A3
+            [130.81, 164.81, 196.00],  # Cm: C3, Eb3, G3
+            [155.56, 185.00, 233.08],  # Eb: Eb3, G3, Bb3
+            [146.83, 174.61, 220.00],  # Dm resolve
+        ],
+        "bass": [73.42, 65.41, 77.78, 73.42],
+        "melody": [293.66, 349.23, 392.00, 440.00, 523.25],
+        "hat_rate": 4,      # Slower, heavier feel
+        "pad_vol": 0.09,    # Deeper pads
+        "bass_vol": 0.14,   # Heavier bass
+    },
+    "space": {
+        "bpm": 90,
+        # Cmaj7/Em — ethereal, floating, cosmic
+        "chords": [
+            [261.63, 329.63, 493.88],  # Cmaj7: C4, E4, B4
+            [329.63, 392.00, 493.88],  # Em:    E4, G4, B4
+            [220.00, 261.63, 329.63],  # Am:    A3, C4, E4
+            [246.94, 329.63, 392.00],  # Em/B:  B3, E4, G4
+        ],
+        "bass": [65.41, 82.41, 55.00, 61.74],  # Deep sub bass
+        "melody": [523.25, 659.25, 783.99, 987.77, 1046.50],
+        "hat_rate": 1,      # Sparse, atmospheric
+        "pad_vol": 0.10,    # Lush pads
+        "bass_vol": 0.08,   # Subtle sub
+    },
+    "vehicles": {
+        "bpm": 135,
+        # E major — energetic, driving, fast
+        "chords": [
+            [329.63, 415.30, 493.88],  # E:  E4, G#4, B4
+            [220.00, 277.18, 329.63],  # A:  A3, C#4, E4
+            [246.94, 311.13, 369.99],  # B:  B3, D#4, F#4
+            [329.63, 415.30, 493.88],  # E resolve
+        ],
+        "bass": [82.41, 110.00, 123.47, 82.41],
+        "melody": [659.25, 783.99, 880.00, 987.77, 1046.50],
+        "hat_rate": 2,      # Fast 8th notes
+        "pad_vol": 0.06,    # Lighter pad
+        "bass_vol": 0.13,   # Punchy bass
+    },
+    "fruits": {
+        "bpm": 125,
+        # G major — bright, happy, tropical
+        "chords": [
+            [392.00, 493.88, 587.33],  # G:  G4, B4, D5
+            [261.63, 329.63, 392.00],  # C:  C4, E4, G4
+            [293.66, 369.99, 440.00],  # D:  D4, F#4, A4
+            [329.63, 392.00, 493.88],  # Em: E4, G4, B4
+        ],
+        "bass": [98.00, 130.81, 146.83, 82.41],
+        "melody": [783.99, 880.00, 987.77, 1046.50, 1174.66],
+        "hat_rate": 2,
+        "pad_vol": 0.07,
+        "bass_vol": 0.11,
+    },
+    "flags": {
+        "bpm": 110,
+        # F major — warm, adventurous, world-music feel
+        "chords": [
+            [174.61, 220.00, 261.63],  # F:  F3, A3, C4
+            [196.00, 246.94, 293.66],  # G:  G3, B3, D4
+            [220.00, 261.63, 329.63],  # Am: A3, C4, E4
+            [174.61, 220.00, 261.63],  # F resolve
+        ],
+        "bass": [87.31, 98.00, 110.00, 87.31],
+        "melody": [523.25, 587.33, 659.25, 783.99, 880.00],
+        "hat_rate": 3,      # Moderate
+        "pad_vol": 0.08,
+        "bass_vol": 0.11,
+    },
+}
+
+
+def generate_category_bgm(category: str, path: Path, duration: float = 30.0):
+    """
+    # Generate category-specific background music.
+    # Each category gets its own key, tempo, and feel.
+    # Falls back to default BGM if category not found.
+    """
+    if category not in CATEGORY_MUSIC:
+        return generate_bgm(path, duration)
+
+    spec = CATEGORY_MUSIC[category]
+    n = int(SAMPLE_RATE * duration)
+    result = np.zeros(n)
+    bpm = spec["bpm"]
+    beat_dur = 60.0 / bpm
+    chord_dur = 4 * beat_dur  # 4 beats per chord
+
+    chords = spec["chords"]
+    pad_vol = spec["pad_vol"]
+    bass_vol = spec["bass_vol"]
+
+    # --- Chord pad layer ---
+    for chord_idx, chord_notes in enumerate(chords):
+        for repeat in range(int(duration / (len(chords) * chord_dur)) + 1):
+            chord_start = (repeat * len(chords) + chord_idx) * chord_dur
+            if chord_start >= duration:
+                break
+            for note_freq in chord_notes:
+                start_s = int(chord_start * SAMPLE_RATE)
+                end_s = min(int((chord_start + chord_dur) * SAMPLE_RATE), n)
+                if start_s >= n:
+                    break
+                length = end_s - start_s
+                if length <= 0:
+                    continue
+                note_t = np.linspace(0, chord_dur, length, endpoint=False)
+                # Sine pad + slight detune for warmth
+                note = pad_vol * np.sin(2 * np.pi * note_freq * note_t)
+                note += pad_vol * 0.3 * np.sin(2 * np.pi * note_freq * 1.003 * note_t)
+                # Smooth envelope
+                fade = min(int(0.08 * SAMPLE_RATE), length // 4)
+                env = np.ones(length)
+                env[:fade] = np.linspace(0, 1, fade)
+                env[-fade:] = np.linspace(1, 0, fade)
+                note *= env
+                result[start_s:end_s] += note
+
+    # --- Bass line ---
+    for chord_idx, bass_freq in enumerate(spec["bass"]):
+        for repeat in range(int(duration / (len(spec["bass"]) * chord_dur)) + 1):
+            chord_start = (repeat * len(spec["bass"]) + chord_idx) * chord_dur
+            if chord_start >= duration:
+                break
+            for beat in [0, 2]:
+                beat_start = chord_start + beat * beat_dur
+                if beat_start >= duration:
+                    break
+                start_s = int(beat_start * SAMPLE_RATE)
+                note_len = int(beat_dur * 0.7 * SAMPLE_RATE)
+                end_s = min(start_s + note_len, n)
+                length = end_s - start_s
+                if length <= 0:
+                    continue
+                note_t = np.linspace(0, beat_dur * 0.7, length, endpoint=False)
+                bass = bass_vol * np.sin(2 * np.pi * bass_freq * note_t)
+                # Sub-harmonic for weight
+                bass += bass_vol * 0.5 * np.sin(2 * np.pi * bass_freq * 0.5 * note_t)
+                bass *= np.exp(-3.5 * note_t / (beat_dur * 0.7))
+                result[start_s:end_s] += bass
+
+    # --- Melody (pentatonic, deterministic per category) ---
+    melody_notes = spec["melody"]
+    seed = sum(ord(c) for c in category)
+    rng = np.random.RandomState(seed)
+    melody_dur = beat_dur * 0.35
+    for beat_idx in range(int(duration / beat_dur)):
+        if beat_idx % 2 == 1:
+            beat_time = beat_idx * beat_dur
+            if beat_time >= duration:
+                break
+            freq = melody_notes[rng.randint(0, len(melody_notes))]
+            start_s = int(beat_time * SAMPLE_RATE)
+            mel_len = int(melody_dur * SAMPLE_RATE)
+            end_s = min(start_s + mel_len, n)
+            length = end_s - start_s
+            if length <= 0:
+                continue
+            note_t = np.linspace(0, melody_dur, length, endpoint=False)
+            mel = 0.05 * np.sin(2 * np.pi * freq * note_t)
+            mel += 0.015 * np.sin(2 * np.pi * freq * 2 * note_t)
+            mel += 0.008 * np.sin(2 * np.pi * freq * 3 * note_t)
+            mel *= np.exp(-5.0 * note_t / melody_dur)
+            result[start_s:end_s] += mel
+
+    # --- Percussion ---
+    hat_dur = 0.025
+    hat_samples = int(hat_dur * SAMPLE_RATE)
+    hat_interval = beat_dur / spec["hat_rate"]
+    for beat_idx in range(int(duration / hat_interval)):
+        hat_time = beat_idx * hat_interval
+        if hat_time >= duration:
+            break
+        start_s = int(hat_time * SAMPLE_RATE)
+        end_s = min(start_s + hat_samples, n)
+        length = end_s - start_s
+        if length <= 0:
+            continue
+        hat = 0.025 * np.random.uniform(-1, 1, length)
+        hat *= np.exp(-35.0 * np.linspace(0, 1, length))
+        accent = 1.4 if beat_idx % (spec["hat_rate"] * 2) == 0 else 1.0
+        result[start_s:end_s] += hat * accent
+
+    # --- Kick drum on beats 1 and 3 ---
+    kick_dur = 0.06
+    kick_samples = int(kick_dur * SAMPLE_RATE)
+    for beat_idx in range(int(duration / beat_dur)):
+        if beat_idx % 2 == 0:
+            kick_time = beat_idx * beat_dur
+            if kick_time >= duration:
+                break
+            start_s = int(kick_time * SAMPLE_RATE)
+            end_s = min(start_s + kick_samples, n)
+            length = end_s - start_s
+            if length <= 0:
+                continue
+            kick_t = np.linspace(0, kick_dur, length, endpoint=False)
+            # Sine sweep from 150Hz to 50Hz = punchy kick
+            freq_sweep = 150 - 100 * kick_t / kick_dur
+            kick = 0.12 * np.sin(2 * np.pi * freq_sweep * kick_t)
+            kick *= np.exp(-25.0 * kick_t / kick_dur)
+            result[start_s:end_s] += kick
+
+    # Normalize
+    peak = np.max(np.abs(result))
+    if peak > 0:
+        result = result / peak * 0.85
+
+    # Seamless loop crossfade
+    fade_samples = int(0.1 * SAMPLE_RATE)
+    result[:fade_samples] *= np.linspace(0, 1, fade_samples)
+    result[-fade_samples:] *= np.linspace(1, 0, fade_samples)
+
+    _save_wav(result, path)
+
+
+# ============================================================
 # Main generator — creates all missing SFX + music files
 # ============================================================
 
@@ -482,9 +725,17 @@ def ensure_all_sfx():
             generator(path)
             generated.append(name)
 
-    # Generate default background music if none exists
+    # Generate category-specific background music for each quiz category
+    for category in config.CATEGORIES:
+        bgm_path = config.MUSIC_DIR / f"{category}.wav"
+        if not bgm_path.exists():
+            print(f"[SFX GEN] Generating {category} background music...")
+            generate_category_bgm(category, bgm_path)
+            generated.append(f"bgm_{category}")
+
+    # Also generate default BGM as fallback
     bgm_path = config.MUSIC_DIR / "default_bgm.wav"
-    if not bgm_path.exists() and not any(config.MUSIC_DIR.glob("*.mp3")):
+    if not bgm_path.exists():
         print("[SFX GEN] Generating default background music...")
         generate_bgm(bgm_path)
         generated.append("bgm")

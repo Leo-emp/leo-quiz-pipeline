@@ -21,6 +21,7 @@ from thumbnail import generate_thumbnail
 from metadata import generate_metadata, save_metadata
 from sfx_generator import ensure_all_sfx
 from mascot_generator import ensure_mascot_images
+from font_downloader import ensure_fonts
 
 
 def run_pipeline(category: str = None, num_rounds: int = None,
@@ -45,17 +46,23 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     print(f"[LEO QUIZ] Starting pipeline: {category}, {num_rounds} rounds")
     print(f"[LEO QUIZ] Output: {output_dir}")
 
-    # --- Step 0a: Ensure Leo mascot images exist ---
+    # --- Step 0a: Ensure custom fonts are available ---
+    # Downloads Baloo 2 (titles) and Fredoka One (countdown) from Google Fonts.
+    # Only runs if fonts are missing — once downloaded, they're reused forever.
+    print("[LEO QUIZ] Step 0a: Checking fonts...")
+    ensure_fonts()
+
+    # --- Step 0b: Ensure Leo mascot images exist ---
     # Generates 4 mascot poses via Gemini Imagen (or fallback PIL drawings).
     # Only runs if poses are missing — once generated, they're reused forever.
-    print("[LEO QUIZ] Step 0a: Checking mascot assets...")
+    print("[LEO QUIZ] Step 0b: Checking mascot assets...")
     ensure_mascot_images()
 
-    # --- Step 0b: Ensure all SFX + background music exist ---
+    # --- Step 0c: Ensure all SFX + background music exist ---
     # Auto-generates any missing audio files from pure math (numpy)
     # so the pipeline works out-of-the-box with zero bundled assets.
     # Skips files that already exist — drop in your own WAVs to override.
-    print("[LEO QUIZ] Step 0b: Checking audio assets...")
+    print("[LEO QUIZ] Step 0c: Checking audio assets...")
     ensure_all_sfx()
 
     # --- Step 1: Generate quiz content via Gemini ---
