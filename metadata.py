@@ -2,7 +2,7 @@
 # ============================================================
 # Auto-generated video metadata (titles, descriptions, tags)
 # using Gemini for SEO-optimized, platform-specific content.
-# Generates separate metadata for YouTube and TikTok.
+# Generates metadata for all 4 platforms: YouTube, TikTok, Instagram, Facebook.
 # ============================================================
 import json
 import re
@@ -41,7 +41,9 @@ Return ONLY JSON:
 }}
 
 For YouTube: title should include "Guess the {cat_display}" and be kid-friendly.
-For TikTok: title should be shorter, hashtag-heavy.
+For TikTok: title should be shorter, hashtag-heavy, max 150 chars.
+For Instagram: caption should be engaging ('Can YOU guess all 6? 🤔 Comment your score!'), include up to 30 hashtags mixing broad and niche.
+For Facebook: title should be shareable and parent-targeted ('How Many Animals Can Your Kids Guess? 🦁'), description encourages sharing, minimal hashtags.
 Made for Kids content — keep everything family-friendly."""
 
     client = genai.Client(api_key=config.GEMINI_API_KEY)
