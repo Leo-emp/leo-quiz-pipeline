@@ -432,6 +432,79 @@ class ThemedDecorations:
 
 
 # ============================================================
+# Countdown Timer Bar — animated urgency indicator
+# ============================================================
+
+class CountdownBar:
+    """
+    # Renders an animated countdown bar that shrinks over time.
+    # Creates visual urgency during the guessing phase.
+    # Bar starts full and empties as the countdown progresses,
+    # with color shift from green → yellow → red at the end.
+    """
+
+    @staticmethod
+    def render(frame: Image.Image, progress: float,
+               color: tuple = (255, 255, 255),
+               y_position: float = 0.175,
+               bar_width_ratio: float = 0.75,
+               bar_height: int = 12) -> Image.Image:
+        """
+        # Draw countdown bar on the frame.
+        # progress: 0.0 = full bar (start), 1.0 = empty bar (time up)
+        """
+        progress = max(0.0, min(1.0, progress))
+        w, h = frame.size
+
+        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        bar_full_w = int(w * bar_width_ratio)
+        bar_x = (w - bar_full_w) // 2
+        bar_y = int(h * y_position)
+        remaining = 1.0 - progress
+
+        # Color shifts: green → yellow → red as time runs out
+        if remaining > 0.5:
+            # Green zone
+            bar_color = (80, 220, 100, 200)
+        elif remaining > 0.25:
+            # Yellow zone
+            bar_color = (255, 220, 50, 220)
+        else:
+            # Red zone — pulse for urgency
+            pulse = 0.7 + 0.3 * math.sin(progress * 20)
+            bar_color = (255, int(60 * pulse), int(60 * pulse), 240)
+
+        # Background track (dark, subtle)
+        draw.rounded_rectangle(
+            [bar_x, bar_y, bar_x + bar_full_w, bar_y + bar_height],
+            radius=bar_height // 2,
+            fill=(0, 0, 0, 80)
+        )
+
+        # Filled portion (remaining time)
+        filled_w = max(bar_height, int(bar_full_w * remaining))
+        draw.rounded_rectangle(
+            [bar_x, bar_y, bar_x + filled_w, bar_y + bar_height],
+            radius=bar_height // 2,
+            fill=bar_color
+        )
+
+        # Bright tip at the end of the filled portion
+        if remaining > 0.05:
+            tip_x = bar_x + filled_w - bar_height // 2
+            draw.ellipse(
+                [tip_x - 3, bar_y - 2, tip_x + 3, bar_y + bar_height + 2],
+                fill=(255, 255, 255, 180)
+            )
+
+        if frame.mode != "RGBA":
+            frame = frame.convert("RGBA")
+        return Image.alpha_composite(frame, overlay)
+
+
+# ============================================================
 # Enhanced text effects — glow, rainbow, pulsing
 # ============================================================
 

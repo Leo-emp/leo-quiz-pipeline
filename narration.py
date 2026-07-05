@@ -21,6 +21,27 @@ class RoundAudio:
     # Each timestamp: {"word": str, "start": float, "end": float}
 
 
+# --- Varied narration phrases ---
+# Top creators never repeat the same line every round.
+# These rotate per round_index to keep kids engaged.
+
+QUESTION_PHRASES = [
+    "What {category} is this? Can you guess?",
+    "Hmm, here's a tricky one! What {category} do you see?",
+    "Take a close look! What {category} is hiding?",
+    "Can you figure this one out? What {category} is it?",
+    "Think carefully! What {category} could this be?",
+]
+
+REVEAL_PHRASES = [
+    "It's a {answer}! Did you get it right?",
+    "The answer is {answer}! Amazing!",
+    "It's a {answer}! Great job if you guessed it!",
+    "That's right, it's a {answer}! How cool is that?",
+    "Wow, it's a {answer}! Did you know that one?",
+]
+
+
 def generate_narration(text: str, output_path: Path) -> tuple[Path, list[dict]]:
     """
     # Generate speech audio from text using ElevenLabs.
@@ -78,12 +99,15 @@ def generate_round_narration(round_data: QuizRound, category: str,
 
     cat_display = config.CATEGORIES[category]["display"]
 
-    # Question line: "What [category] is this?"
-    q_text = f"What {cat_display.lower()} is this?"
+    # Pick varied question phrase based on round index (cycles through 5 variants)
+    round_idx = getattr(round_data, '_round_index', 0)
+    q_template = QUESTION_PHRASES[round_idx % len(QUESTION_PHRASES)]
+    q_text = q_template.format(category=cat_display.lower())
     q_path, _ = generate_narration(q_text, output_dir / "question.mp3")
 
-    # Reveal line: "It's a [answer]!"
-    r_text = f"It's a {round_data.answer}!"
+    # Pick varied reveal phrase (different from question rotation)
+    r_template = REVEAL_PHRASES[round_idx % len(REVEAL_PHRASES)]
+    r_text = r_template.format(answer=round_data.answer)
     r_path, _ = generate_narration(r_text, output_dir / "reveal.mp3")
 
     # Fun fact line (with timestamps for word-by-word animation)

@@ -23,7 +23,7 @@ from frame_composer import (
 )
 from effects import (
     ConfettiBurst, ScreenShake, KenBurnsZoom, GlowRing,
-    ProgressIndicator, ThemedDecorations,
+    ProgressIndicator, ThemedDecorations, CountdownBar,
     render_glow_text, render_rainbow_text, apply_vignette
 )
 from quiz_generator import QuizRound, QuizPack
@@ -350,6 +350,16 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
                                         font_size=config.QUESTION_FONT_SIZE)
 
     # ---------------------------------------------------------------
+    # TIMER BAR — animated countdown bar below the title
+    # ---------------------------------------------------------------
+    if phase in ("silhouette", "countdown_3", "countdown_2", "countdown_1"):
+        # Progress from 0 (bar full) to 1 (bar empty) over the entire guess phase
+        guess_start = round_start + config.SILHOUETTE_START
+        guess_end = round_start + config.REVEAL_START
+        guess_progress = (t - guess_start) / (guess_end - guess_start)
+        frame = CountdownBar.render(frame, guess_progress, primary_rgb)
+
+    # ---------------------------------------------------------------
     # COUNTDOWN NUMBER POP — with GLOW effect
     # ---------------------------------------------------------------
     if phase.startswith("countdown_"):
@@ -508,7 +518,7 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
         )
 
     # ---------------------------------------------------------------
-    # POST-PROCESSING: Vignette + Ken Burns zoom
+    # POST-PROCESSING: Vignette + Ken Burns zoom + round transition
     # ---------------------------------------------------------------
     # Apply vignette for cinematic depth on all frames
     frame = apply_vignette(frame, config.VIGNETTE_INTENSITY)
@@ -518,6 +528,21 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
         frame = KenBurnsZoom.apply(frame, t, round_start,
                                     config.SILHOUETTE_DURATION + config.COUNTDOWN_START,
                                     config.ZOOM_MAX)
+
+    # Smooth zoom-out transition at end of round (last 0.3s)
+    # Creates a subtle scale-down that blends into next round's slide-in
+    transition_start = round_start + config.TRANSITION_START
+    if t >= transition_start and phase == "fun_fact":
+        trans_progress = (t - transition_start) / config.TRANSITION_DURATION
+        trans_progress = min(1.0, max(0.0, trans_progress))
+        if trans_progress > 0.01:
+            # Scale down slightly + fade for crossfade feel
+            zoom_out = 1.0 + 0.08 * trans_progress
+            frame = KenBurnsZoom.apply(frame, trans_progress, 0, 1.0, zoom_out)
+            # Fade to slightly darker (simulates dissolve)
+            arr = np.array(frame).astype(np.float32)
+            arr *= (1.0 - 0.4 * trans_progress)
+            frame = Image.fromarray(arr.astype(np.uint8))
 
     return np.array(frame.convert("RGB"))
 

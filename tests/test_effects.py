@@ -151,3 +151,29 @@ def test_apply_vignette():
     center_brightness = result_arr[100, 100, :3].mean()
     corner_brightness = result_arr[5, 5, :3].mean()
     assert center_brightness > corner_brightness
+
+
+def test_countdown_bar_renders():
+    """# CountdownBar should draw a visible bar on the frame."""
+    from effects import CountdownBar
+    frame = _make_test_frame(400, 400)
+    result = CountdownBar.render(frame, progress=0.5, color=(255, 255, 255))
+    orig_arr = np.array(frame)
+    result_arr = np.array(result)
+    assert not np.array_equal(orig_arr, result_arr)
+
+
+def test_countdown_bar_color_changes():
+    """# Bar color should shift from green to red as progress approaches 1.0."""
+    from effects import CountdownBar
+    # At 0.0 progress (green zone)
+    frame1 = _make_test_frame(400, 400)
+    result_start = CountdownBar.render(frame1, progress=0.0)
+    # At 0.9 progress (red zone)
+    frame2 = _make_test_frame(400, 400)
+    result_end = CountdownBar.render(frame2, progress=0.9)
+    # Both should render (not identical to original)
+    assert not np.array_equal(np.array(frame1), np.array(result_start))
+    assert not np.array_equal(np.array(frame2), np.array(result_end))
+    # The two results should differ (different colors/widths)
+    assert not np.array_equal(np.array(result_start), np.array(result_end))

@@ -101,6 +101,30 @@ def _exponential_decay(samples: np.ndarray, decay_rate: float = 5.0) -> np.ndarr
     return samples * decay
 
 
+def _simple_reverb(samples: np.ndarray, decay: float = 0.3,
+                   delays_ms: list = None) -> np.ndarray:
+    """
+    # Simulate reverb by mixing in delayed copies of the signal.
+    # Creates spatial depth — sounds less dry and robotic.
+    # decay: volume multiplier per echo (0.0-1.0).
+    """
+    if delays_ms is None:
+        delays_ms = [23, 47, 73, 97]  # Prime-number ms delays for natural feel
+    result = samples.copy().astype(np.float64)
+    for i, delay in enumerate(delays_ms):
+        delay_samples = int(delay * SAMPLE_RATE / 1000)
+        echo_volume = decay * (0.7 ** i)  # Each echo quieter
+        if delay_samples < len(result):
+            padded = np.zeros(len(result))
+            padded[delay_samples:] = samples[:len(samples) - delay_samples] * echo_volume
+            result += padded
+    # Normalize to prevent clipping
+    peak = np.max(np.abs(result))
+    if peak > 1.0:
+        result /= peak
+    return result
+
+
 # ============================================================
 # Individual SFX generators
 # ============================================================
@@ -123,164 +147,230 @@ def generate_tick(path: Path):
 
 def generate_ding(path: Path):
     """
-    # Bell tone for answer reveal (500ms).
-    # 880Hz fundamental + harmonics (1760Hz, 2640Hz) with decay.
-    # Sounds like a game show "correct" bell.
+    # Rich bell tone for answer reveal (600ms).
+    # 880Hz fundamental + 4 harmonics + slight detuning for warmth.
+    # Reverb gives it spatial depth. Sounds like a real game show bell.
     """
-    duration = 0.5
-    # Fundamental + two harmonics create a rich bell timbre
-    fundamental = _sine_wave(880, duration, 0.6)
-    harmonic2 = _sine_wave(1760, duration, 0.25)
-    harmonic3 = _sine_wave(2640, duration, 0.1)
-    bell = fundamental + harmonic2 + harmonic3
-    # Bell sounds decay exponentially
-    bell = _exponential_decay(bell, decay_rate=4.0)
+    duration = 0.6
+    # Fundamental + 4 harmonics for metallic richness
+    fundamental = _sine_wave(880, duration, 0.5)
+    harmonic2 = _sine_wave(1760, duration, 0.22)
+    harmonic3 = _sine_wave(2640, duration, 0.10)
+    harmonic4 = _sine_wave(3520, duration, 0.05)
+    # Slight detune on fundamental for chorus/shimmer
+    detuned = _sine_wave(882, duration, 0.15)
+    bell = fundamental + harmonic2 + harmonic3 + harmonic4 + detuned
+    bell = _exponential_decay(bell, decay_rate=3.5)
+    # Reverb for spatial depth
+    bell = _simple_reverb(bell, decay=0.25)
     _save_wav(bell, path)
 
 
 def generate_whoosh(path: Path):
     """
-    # Swoosh/transition sound (250ms).
-    # Band-shaped noise with volume envelope — rises then falls.
-    # Used for round transitions and slide-in animations.
+    # Rich swoosh/transition sound (300ms).
+    # Frequency-swept noise + sine sweep for tonal character.
+    # Reverb tail makes it feel like it's moving through space.
     """
-    duration = 0.25
+    duration = 0.3
     n = int(SAMPLE_RATE * duration)
-    # White noise base
-    raw_noise = _noise(duration, 0.4)
-    # Volume envelope: quick rise then fall (triangle shape)
+    t = np.linspace(0, duration, n, endpoint=False)
+    # Noise layer
+    raw_noise = _noise(duration, 0.3)
+    # Sine sweep (high to low) for tonal whoosh character
+    sweep_freq = 2000 - 1500 * t / duration
+    tonal = 0.15 * np.sin(2 * np.pi * np.cumsum(sweep_freq) / SAMPLE_RATE)
+    combined = raw_noise + tonal
+    # Asymmetric envelope: fast rise, longer tail
     env = np.concatenate([
-        np.linspace(0, 1, n // 3),     # Rise
-        np.linspace(1, 0, n - n // 3), # Fall
+        np.linspace(0, 1, n // 4),     # Quick rise
+        np.linspace(1, 0, n - n // 4), # Longer fall
     ])
-    whoosh = raw_noise * env
+    whoosh = combined * env
+    whoosh = _simple_reverb(whoosh, decay=0.2, delays_ms=[15, 33, 51])
     _save_wav(whoosh, path)
 
 
 def generate_applause(path: Path):
     """
-    # Celebratory applause sound (1.5s).
-    # Layered noise bursts with modulation to simulate clapping.
-    # Used after correct answer or high scores.
+    # Realistic-sounding applause (1.5s).
+    # Multiple clap layers at different rates + crowd murmur layer.
+    # Bandpass effect via mixing filtered noise bands.
+    # Reverb simulates a room/hall environment.
     """
     duration = 1.5
     n = int(SAMPLE_RATE * duration)
-    # Base noise for applause texture
-    base = _noise(duration, 0.3)
-    # Modulate with low-frequency wave to create "clap" rhythm (~12 claps/sec)
     t = np.linspace(0, duration, n)
-    modulation = 0.5 + 0.5 * np.sin(2 * np.pi * 12 * t)
-    applause = base * modulation
-    # Fade in quickly, sustain, fade out
-    applause = _envelope(applause, attack=0.05, decay=0.1,
-                         sustain=0.8, release=0.4)
-    _save_wav(applause, path)
+    result = np.zeros(n)
+
+    # Layer 1: Fast individual claps (sharp bursts at ~14/sec)
+    clap_rate = 14
+    clap_dur = 0.012
+    clap_samples = int(clap_dur * SAMPLE_RATE)
+    rng = np.random.RandomState(7)
+    for i in range(int(clap_rate * duration)):
+        # Slight timing randomization for naturalness
+        pos = int((i / clap_rate + rng.uniform(-0.01, 0.01)) * SAMPLE_RATE)
+        if pos < 0 or pos + clap_samples > n:
+            continue
+        clap = rng.uniform(-1, 1, clap_samples) * 0.25
+        clap *= np.exp(-40.0 * np.linspace(0, 1, clap_samples))
+        # Random volume per clap for organic feel
+        clap *= rng.uniform(0.5, 1.2)
+        result[pos:pos + clap_samples] += clap
+
+    # Layer 2: Slower claps at different phase (~9/sec)
+    for i in range(int(9 * duration)):
+        pos = int((i / 9.0 + 0.02 + rng.uniform(-0.015, 0.015)) * SAMPLE_RATE)
+        if pos < 0 or pos + clap_samples > n:
+            continue
+        clap = rng.uniform(-1, 1, clap_samples) * 0.18
+        clap *= np.exp(-35.0 * np.linspace(0, 1, clap_samples))
+        result[pos:pos + clap_samples] += clap
+
+    # Layer 3: Low crowd murmur (filtered noise, adds body)
+    murmur = _noise(duration, 0.06)
+    # Simple low-pass effect via running average
+    kernel_size = 8
+    murmur = np.convolve(murmur, np.ones(kernel_size) / kernel_size, mode='same')
+    result += murmur
+
+    # Overall ADSR envelope
+    result = _envelope(result, attack=0.08, decay=0.1, sustain=0.85, release=0.3)
+    # Reverb for room feel
+    result = _simple_reverb(result, decay=0.2, delays_ms=[31, 67, 103])
+    _save_wav(result, path)
 
 
 def generate_drumroll(path: Path):
     """
-    # Tension-building drumroll (1.0s).
-    # Rapid repeating bursts that increase in volume (crescendo).
-    # Played during the 3-2-1 countdown for dramatic effect.
+    # Tension-building drumroll (1.2s).
+    # Alternating stick hits on a snare-like surface.
+    # Accelerating rhythm + crescendo + tonal body.
+    # Reverb adds room ambience for studio feel.
     """
-    duration = 1.0
+    duration = 1.2
     n = int(SAMPLE_RATE * duration)
     result = np.zeros(n)
-    # Create rapid drum hits (~20 per second, getting faster)
-    hits_per_sec = 20
-    hit_duration = 0.015  # 15ms per hit
-    hit_samples = int(SAMPLE_RATE * hit_duration)
+    rng = np.random.RandomState(42)
 
-    for i in range(int(hits_per_sec * duration)):
-        # Position each hit — they get slightly closer together over time
-        pos = int(i * SAMPLE_RATE / hits_per_sec)
-        if pos + hit_samples > n:
+    # Accelerating hits: start at 12/sec, end at 30/sec
+    total_hits = 28
+    for i in range(total_hits):
+        progress = i / total_hits
+        # Accelerating timing (quadratic)
+        hit_time = duration * (progress ** 0.7)
+        pos = int(hit_time * SAMPLE_RATE)
+        if pos >= n:
             break
-        # Each hit is a noise burst with exponential decay
-        hit = _noise(hit_duration, 0.5)
-        hit = _exponential_decay(hit, decay_rate=30.0)
-        # Crescendo: volume increases linearly over time
-        volume = 0.3 + 0.7 * (i / (hits_per_sec * duration))
-        result[pos:pos + len(hit)] += hit * volume
 
-    # Clip to prevent clipping artifacts
+        hit_dur = 0.02
+        hit_samples = int(hit_dur * SAMPLE_RATE)
+        if pos + hit_samples > n:
+            hit_samples = n - pos
+
+        # Drum hit = noise burst + tonal body (80Hz fundamental)
+        hit_t = np.linspace(0, hit_dur, hit_samples, endpoint=False)
+        hit_noise = rng.uniform(-1, 1, hit_samples) * 0.35
+        hit_tone = 0.3 * np.sin(2 * np.pi * 80 * hit_t)
+        hit = (hit_noise + hit_tone) * np.exp(-35.0 * hit_t / hit_dur)
+
+        # Crescendo + alternating L/R volume for realism
+        volume = 0.25 + 0.75 * progress
+        # Slight volume variation per hit
+        volume *= rng.uniform(0.85, 1.15)
+        result[pos:pos + hit_samples] += hit * volume
+
+    # Normalize
     result = np.clip(result, -1.0, 1.0)
+    # Room reverb
+    result = _simple_reverb(result, decay=0.15, delays_ms=[19, 41, 67])
     _save_wav(result, path)
 
 
 def generate_correct_chime(path: Path):
     """
-    # Happy two-tone chime for correct reveals (300ms).
-    # C5 (523Hz) then E5 (659Hz) — a major third interval.
-    # Universal "you got it right!" sound.
+    # Happy three-tone ascending chime for correct reveals (400ms).
+    # C5→E5→G5 — a major triad arpeggio. Each note has harmonics
+    # and slight chorus detune for warmth. Reverb tail adds polish.
     """
-    note_dur = 0.15  # 150ms per note
-    # First note: C5
-    note1 = _sine_wave(523.25, note_dur, 0.7)
-    note1 = _exponential_decay(note1, 6.0)
-    # Second note: E5 (higher, happy feel)
-    note2 = _sine_wave(659.25, note_dur, 0.7)
-    note2 = _exponential_decay(note2, 6.0)
-    # Concatenate with tiny gap
-    gap = np.zeros(int(SAMPLE_RATE * 0.02))
-    chime = np.concatenate([note1, gap, note2])
+    note_dur = 0.12
+
+    def _rich_note(freq, dur, amp):
+        """# Single note with harmonics + detune for warmth."""
+        note = _sine_wave(freq, dur, amp * 0.7)
+        note += _sine_wave(freq * 2, dur, amp * 0.2)
+        note += _sine_wave(freq * 1.002, dur, amp * 0.1)  # Chorus detune
+        return _exponential_decay(note, 5.0)
+
+    note1 = _rich_note(523.25, note_dur, 0.6)
+    note2 = _rich_note(659.25, note_dur, 0.65)
+    note3 = _rich_note(783.99, note_dur, 0.7)  # G5 — completes major triad
+    gap = np.zeros(int(SAMPLE_RATE * 0.015))
+    chime = np.concatenate([note1, gap, note2, gap, note3])
+    chime = _simple_reverb(chime, decay=0.25)
     _save_wav(chime, path)
 
 
 def generate_jingle_intro(path: Path):
     """
     # Ascending 4-note melody for video intro (1.2s).
-    # C5→E5→G5→C6: a rising major arpeggio.
-    # Signals "the quiz is starting!" excitement.
+    # C5→E5→G5→C6: a rising major arpeggio with harmonics.
+    # Chorus detune + reverb for polished, broadcast-quality feel.
     """
-    # Notes: C5, E5, G5, C6 (ascending major arpeggio)
     freqs = [523.25, 659.25, 783.99, 1046.50]
-    note_dur = 0.25   # 250ms per note
-    gap_dur = 0.05    # 50ms gap between notes
+    note_dur = 0.25
+    gap_dur = 0.04
 
     parts = []
     for i, freq in enumerate(freqs):
-        # Each note has fundamental + octave harmonic for richness
-        note = _sine_wave(freq, note_dur, 0.5)
-        note += _sine_wave(freq * 2, note_dur, 0.15)  # Octave harmonic
-        note = _exponential_decay(note, 3.0)
-        # Volume increases as pitch rises — builds energy
+        # Rich timbre: fundamental + 3 harmonics + chorus detune
+        note = _sine_wave(freq, note_dur, 0.45)
+        note += _sine_wave(freq * 2, note_dur, 0.15)
+        note += _sine_wave(freq * 3, note_dur, 0.06)
+        note += _sine_wave(freq * 1.003, note_dur, 0.12)  # Chorus
+        note = _exponential_decay(note, 2.8)
         note *= (0.7 + 0.3 * (i / len(freqs)))
         parts.append(note)
         if i < len(freqs) - 1:
             parts.append(np.zeros(int(SAMPLE_RATE * gap_dur)))
 
     jingle = np.concatenate(parts)
+    jingle = _simple_reverb(jingle, decay=0.3)
     _save_wav(jingle, path)
 
 
 def generate_jingle_outro(path: Path):
     """
     # Descending melody for video outro (1.5s).
-    # C6→G5→E5→C5→C4: falling arpeggio with final low note.
-    # "That's all folks!" feel — wraps up the quiz.
+    # C6→G5→E5→C5→C4: falling arpeggio with final resolving chord.
+    # Harmonics + chorus + reverb for polished broadcast feel.
     """
-    # Descending: C6, G5, E5, C5, then resolving low C4
     freqs = [1046.50, 783.99, 659.25, 523.25, 261.63]
     note_dur = 0.25
-    gap_dur = 0.03
+    gap_dur = 0.025
 
     parts = []
     for i, freq in enumerate(freqs):
-        note = _sine_wave(freq, note_dur, 0.5)
-        note += _sine_wave(freq * 2, note_dur, 0.12)
-        # Last note sustains longer for finality
         if i == len(freqs) - 1:
-            note = _sine_wave(freq, 0.4, 0.6)
-            note += _sine_wave(freq * 2, 0.4, 0.15)
-            note = _exponential_decay(note, 2.0)
+            # Final note: full C major chord (C4+E4+G4) for resolution
+            dur = 0.5
+            note = _sine_wave(freq, dur, 0.45)
+            note += _sine_wave(freq * 5 / 4, dur, 0.2)  # E4
+            note += _sine_wave(freq * 3 / 2, dur, 0.15)  # G4
+            note += _sine_wave(freq * 1.002, dur, 0.1)  # Chorus
+            note = _exponential_decay(note, 1.8)
         else:
-            note = _exponential_decay(note, 4.0)
+            note = _sine_wave(freq, note_dur, 0.45)
+            note += _sine_wave(freq * 2, note_dur, 0.12)
+            note += _sine_wave(freq * 1.003, note_dur, 0.1)
+            note = _exponential_decay(note, 3.5)
         parts.append(note)
         if i < len(freqs) - 1:
             parts.append(np.zeros(int(SAMPLE_RATE * gap_dur)))
 
     jingle = np.concatenate(parts)
+    jingle = _simple_reverb(jingle, decay=0.35)
     _save_wav(jingle, path)
 
 
@@ -665,6 +755,9 @@ def generate_category_bgm(category: str, path: Path, duration: float = 30.0):
             kick = 0.12 * np.sin(2 * np.pi * freq_sweep * kick_t)
             kick *= np.exp(-25.0 * kick_t / kick_dur)
             result[start_s:end_s] += kick
+
+    # Light reverb for room ambience on all layers
+    result = _simple_reverb(result, decay=0.15, delays_ms=[29, 59, 89])
 
     # Normalize
     peak = np.max(np.abs(result))

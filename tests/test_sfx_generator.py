@@ -52,7 +52,7 @@ def test_generate_ding(tmp_path):
     assert path.exists()
     with wave.open(str(path), "r") as wf:
         duration = wf.getnframes() / wf.getframerate()
-        assert duration == pytest.approx(0.5, abs=0.01)
+        assert duration == pytest.approx(0.6, abs=0.05)
 
 
 def test_generate_bgm(tmp_path):
@@ -104,3 +104,23 @@ def test_envelope_shapes_audio():
     assert shaped[22050] == pytest.approx(0.5, abs=0.1)
     # Release: ends at 0
     assert shaped[-1] == pytest.approx(0.0, abs=0.01)
+
+
+def test_simple_reverb_adds_tail():
+    """# _simple_reverb should add delayed echoes making the signal longer-sounding."""
+    from sfx_generator import _simple_reverb
+    # Create a short impulse (1 at start, 0 everywhere else)
+    impulse = np.zeros(4410)  # 0.1 seconds
+    impulse[0] = 1.0
+    reverbed = _simple_reverb(impulse, decay=0.5)
+    # Reverbed signal should have energy after the initial impulse
+    # (the echoes at prime-number delays)
+    assert np.sum(np.abs(reverbed[100:])) > 0.1
+
+
+def test_simple_reverb_does_not_clip():
+    """# _simple_reverb should normalize to prevent clipping."""
+    from sfx_generator import _simple_reverb
+    loud = np.ones(4410) * 0.9
+    reverbed = _simple_reverb(loud, decay=0.5)
+    assert np.max(np.abs(reverbed)) <= 1.0

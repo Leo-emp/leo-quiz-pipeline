@@ -120,6 +120,8 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     for i, r in enumerate(quiz_pack.rounds):
         audio_dir = rounds_dir / f"round_{i+1}_audio"
         print(f"[LEO QUIZ]   Narrating: {r.answer}")
+        # Tag round with its index so narration picks varied phrases
+        r._round_index = i
         ra = generate_round_narration(r, category, audio_dir)
         round_audios.append(ra)
 

@@ -65,20 +65,57 @@ def mix_layers(layers: list[tuple[Path, int, float]],
     return output_path
 
 
+def _duck_music_during_voice(music_path: Path, voice_regions: list[tuple[int, int]],
+                             total_ms: int, output_path: Path,
+                             normal_vol: float = 0.18,
+                             ducked_vol: float = 0.08) -> Path:
+    """
+    # Dynamic music ducking: lower music volume during voice segments.
+    # voice_regions: list of (start_ms, end_ms) when voice is playing.
+    # This creates the professional "sidechain" effect heard in studio content.
+    """
+    music = AudioSegment.from_file(str(music_path))
+    loops_needed = (total_ms // len(music)) + 1
+    looped = music * loops_needed
+    looped = looped[:total_ms]
+
+    # Apply volume in chunks (50ms resolution for smooth ducking)
+    chunk_ms = 50
+    result = AudioSegment.silent(duration=0)
+
+    for pos in range(0, total_ms, chunk_ms):
+        chunk_end = min(pos + chunk_ms, total_ms)
+        chunk = looped[pos:chunk_end]
+
+        # Check if any voice region overlaps this chunk
+        is_voice = any(start <= pos < end or start < chunk_end <= end
+                       for start, end in voice_regions)
+
+        vol = ducked_vol if is_voice else normal_vol
+        if vol < 1.0:
+            db_change = 20 * math.log10(max(vol, 0.01))
+            chunk = chunk.apply_gain(db_change)
+        result += chunk
+
+    result.export(str(output_path), format="wav")
+    return output_path
+
+
 def build_short_audio(round_audios: list, music_path: Path,
                        total_duration: float,
                        output_path: Path) -> Path:
     """
     # Build complete audio track for a short-form video.
-    # UPGRADED sound design with richer SFX placement:
+    # STUDIO-GRADE sound design with dynamic music ducking:
     #
-    # Layer 1: Background music (continuous, ducked to 15%)
+    # Layer 1: Background music (dynamic ducking — louder between rounds,
+    #          quieter during voice) for professional sidechain feel
     # Layer 2: Intro jingle
     # Layer 3: Per-round sounds:
-    #   - Question voice narration
+    #   - Question voice narration (with varied phrases)
     #   - Tick + countdown beep on each countdown number
     #   - Drumroll building tension before reveal
-    #   - Ding + correct chime on answer reveal
+    #   - Ding + correct chime on answer reveal (with reverb)
     #   - Reveal voice narration
     #   - Fun fact voice narration
     #   - Applause on final round reveal
@@ -89,14 +126,24 @@ def build_short_audio(round_audios: list, music_path: Path,
     layers = []
     num_rounds = len(round_audios)
 
-    # --- Layer 1: Background music (looping, ducked to 15%) ---
+    # Collect voice regions for dynamic ducking
+    voice_regions = []
+    for i, ra in enumerate(round_audios):
+        round_start_ms = int((config.INTRO_DURATION + i * config.ROUND_DURATION) * 1000)
+        # Question voice (~1.5s estimate)
+        voice_regions.append((round_start_ms, round_start_ms + 2000))
+        # Reveal voice
+        reveal_ms = round_start_ms + int(config.REVEAL_START * 1000)
+        voice_regions.append((reveal_ms, reveal_ms + 1500))
+        # Fun fact voice
+        fact_ms = round_start_ms + int(config.FUN_FACT_START * 1000)
+        voice_regions.append((fact_ms, fact_ms + 2500))
+
+    # --- Layer 1: Background music with dynamic ducking ---
     if music_path and music_path.exists():
-        music = AudioSegment.from_file(str(music_path))
-        loops_needed = (total_ms // len(music)) + 1
-        looped_music = music * loops_needed
-        looped_path = output_path.parent / "looped_music.wav"
-        looped_music[:total_ms].export(str(looped_path), format="wav")
-        layers.append((looped_path, 0, 0.15))  # Ducked lower than v1 (was 0.18)
+        ducked_path = output_path.parent / "ducked_music.wav"
+        _duck_music_during_voice(music_path, voice_regions, total_ms, ducked_path)
+        layers.append((ducked_path, 0, 1.0))  # Already volume-adjusted
 
     # --- Layer 2: Intro jingle ---
     if config.SFX_FILES["jingle_intro"].exists():
