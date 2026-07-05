@@ -1,10 +1,12 @@
 # thumbnail.py
 # ============================================================
 # Click-optimized YouTube thumbnails for Leo Quiz videos.
-# MASSIVELY UPGRADED from v1: diagonal split layout, multiple
-# silhouettes, emoji accents, glow effects, round count badge,
-# brighter colors, bigger bolder text. Designed to maximize
-# click-through rate in YouTube search/browse.
+# 3 A/B test variants for maximum CTR:
+#   A: Diagonal split layout (silhouette vs reveal)
+#   B: Giant Mystery (huge centered silhouette + glowing "?")
+#   C: Grid Challenge (2x2 silhouette grid + "HOW MANY?")
+#
+# Gemini Vision auto-selects the best variant per video.
 # ============================================================
 import math
 from pathlib import Path
@@ -215,3 +217,230 @@ def generate_thumbnail(quiz_pack: QuizPack,
     output_path.parent.mkdir(parents=True, exist_ok=True)
     thumb.convert("RGB").save(output_path, "PNG", quality=95)
     return output_path
+
+
+def generate_thumbnail_variant_b(quiz_pack: QuizPack,
+                                   silhouette_paths: list[Path],
+                                   output_path: Path) -> Path:
+    """
+    # Variant B: "Giant Mystery" layout.
+    # - Full category gradient background
+    # - Single giant silhouette centered (70% of height)
+    # - Giant "?" overlaid on silhouette (yellow glow)
+    # - "GUESS THE [CATEGORY]!" at bottom (glow text)
+    # - Bright yellow/red 8px border
+    # - Leo mascot (surprised) in corner
+    # - Vignette for depth
+    """
+    w, h = THUMB_SIZE
+    category = quiz_pack.category
+    colors = config.CATEGORY_COLORS[category]
+    primary_rgb = hex_to_rgb(colors["primary"])
+    cat_display = config.CATEGORIES[category]["display"]
+
+    # Background gradient
+    bg = render_gradient_background(w, h, category, t=0.0)
+    thumb = bg.convert("RGBA")
+
+    # Bright yellow/red border (8px)
+    draw = ImageDraw.Draw(thumb)
+    draw.rectangle([0, 0, w - 1, h - 1], outline=(255, 50, 50, 255), width=8)
+
+    # Giant centered silhouette (70% of height)
+    if silhouette_paths:
+        sil = Image.open(silhouette_paths[0]).convert("RGBA")
+        sil_size = int(h * 0.70)
+        sil = sil.resize((sil_size, sil_size), Image.LANCZOS)
+        sil_x = w // 2 - sil_size // 2
+        sil_y = (h - sil_size) // 2 - 10
+        thumb.paste(sil, (sil_x, sil_y), sil)
+
+    # Giant "?" overlaid on the silhouette (yellow glow)
+    thumb = render_glow_text(thumb, "?",
+                              position=(w // 2, h // 2 - 20),
+                              font_size=200,
+                              glow_color=(255, 230, 0),
+                              text_color=(255, 255, 255),
+                              glow_radius=20)
+
+    # "GUESS THE ANIMAL!" at bottom
+    thumb = render_glow_text(thumb, f"GUESS THE {cat_display.upper()}!",
+                              position=(w // 2, h - 55),
+                              font_size=64,
+                              glow_color=primary_rgb,
+                              text_color=(255, 255, 255),
+                              glow_radius=12)
+
+    # Rounds badge top-right
+    num_rounds = len(quiz_pack.rounds)
+    thumb = _draw_badge(thumb, f"{num_rounds} ROUNDS!",
+                         position=(w - 100, 45),
+                         bg_color=(255, 50, 50))
+
+    # Leo mascot (surprised) bottom-left
+    surprised_path = config.MASCOT_POSES.get("surprised")
+    if surprised_path and surprised_path.exists():
+        mascot = Image.open(surprised_path).convert("RGBA")
+        mascot_h = int(h * 0.30)
+        mascot_w = int(mascot.width * (mascot_h / mascot.height))
+        mascot = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+        thumb.paste(mascot, (20, h - mascot_h - 15), mascot)
+
+    # Vignette
+    thumb = apply_vignette(thumb, 0.30)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    thumb.convert("RGB").save(output_path, "PNG", quality=95)
+    return output_path
+
+
+def generate_thumbnail_variant_c(quiz_pack: QuizPack,
+                                   silhouette_paths: list[Path],
+                                   output_path: Path) -> Path:
+    """
+    # Variant C: "Grid Challenge" layout.
+    # - Category gradient background
+    # - 2×2 grid of 4 silhouettes (numbered 1-4)
+    # - "HOW MANY CAN YOU GUESS?" header (glow text)
+    # - Leo mascot in bottom-right corner
+    # - Rounds badge in top-right
+    # - Vignette for depth
+    """
+    w, h = THUMB_SIZE
+    category = quiz_pack.category
+    colors = config.CATEGORY_COLORS[category]
+    primary_rgb = hex_to_rgb(colors["primary"])
+
+    # Background gradient
+    bg = render_gradient_background(w, h, category, t=0.0)
+    thumb = bg.convert("RGBA")
+
+    # Bright border
+    draw = ImageDraw.Draw(thumb)
+    draw.rectangle([0, 0, w - 1, h - 1], outline=(255, 230, 0, 255), width=6)
+
+    # "HOW MANY CAN YOU GUESS?" header
+    thumb = render_glow_text(thumb, "HOW MANY CAN YOU GUESS?",
+                              position=(w // 2, 50),
+                              font_size=62,
+                              glow_color=primary_rgb,
+                              text_color=(255, 255, 255),
+                              glow_radius=12)
+
+    # 2×2 grid of silhouettes with number labels
+    grid_size = int(h * 0.30)
+    grid_gap = 30
+    grid_start_x = w // 2 - grid_size - grid_gap // 2
+    grid_start_y = 110
+    positions = [
+        (grid_start_x, grid_start_y),
+        (grid_start_x + grid_size + grid_gap, grid_start_y),
+        (grid_start_x, grid_start_y + grid_size + grid_gap),
+        (grid_start_x + grid_size + grid_gap, grid_start_y + grid_size + grid_gap),
+    ]
+
+    for i, (gx, gy) in enumerate(positions):
+        # Draw semi-transparent cell background
+        cell_bg = Image.new("RGBA", (grid_size, grid_size), (0, 0, 0, 80))
+        thumb.paste(cell_bg, (gx, gy), cell_bg)
+
+        # Paste silhouette if available
+        if i < len(silhouette_paths):
+            sil = Image.open(silhouette_paths[i]).convert("RGBA")
+            sil = sil.resize((grid_size - 20, grid_size - 20), Image.LANCZOS)
+            thumb.paste(sil, (gx + 10, gy + 10), sil)
+
+        # Number label in top-left of each cell
+        thumb = render_glow_text(thumb, str(i + 1),
+                                  position=(gx + 25, gy + 25),
+                                  font_size=32,
+                                  glow_color=(255, 230, 0),
+                                  text_color=(255, 255, 255),
+                                  glow_radius=6)
+
+    # Rounds badge top-right
+    num_rounds = len(quiz_pack.rounds)
+    thumb = _draw_badge(thumb, f"{num_rounds} ROUNDS!",
+                         position=(w - 100, 45),
+                         bg_color=(255, 50, 50))
+
+    # Category subtitle at bottom
+    cat_display = config.CATEGORIES[category]["display"]
+    thumb = render_text(thumb, f"{cat_display}s Edition!",
+                         position=(w // 2, h - 35),
+                         font_size=38,
+                         color=(255, 255, 200))
+
+    # Leo mascot in bottom-right
+    excited_path = config.MASCOT_POSES.get("excited")
+    if excited_path and excited_path.exists():
+        mascot = Image.open(excited_path).convert("RGBA")
+        mascot_h = int(h * 0.30)
+        mascot_w = int(mascot.width * (mascot_h / mascot.height))
+        mascot = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+        thumb.paste(mascot, (w - mascot_w - 20, h - mascot_h - 50), mascot)
+
+    # Floating question marks
+    thumb = _draw_question_marks(thumb, count=3)
+
+    # Vignette
+    thumb = apply_vignette(thumb, 0.25)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    thumb.convert("RGB").save(output_path, "PNG", quality=95)
+    return output_path
+
+
+def generate_all_thumbnails(quiz_pack: QuizPack,
+                              image_paths: list[Path],
+                              silhouette_paths: list[Path],
+                              output_dir: Path) -> dict[str, Path]:
+    """# Generate 3 A/B test thumbnail variants.
+    # Returns dict mapping variant key to file path: {"a": ..., "b": ..., "c": ...}."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = {}
+    paths["a"] = generate_thumbnail(quiz_pack, image_paths, silhouette_paths,
+                                     output_dir / "thumb_a.png")
+    paths["b"] = generate_thumbnail_variant_b(quiz_pack, silhouette_paths,
+                                               output_dir / "thumb_b.png")
+    paths["c"] = generate_thumbnail_variant_c(quiz_pack, silhouette_paths,
+                                               output_dir / "thumb_c.png")
+    return paths
+
+
+def select_best_thumbnail(thumb_paths: dict[str, Path]) -> str:
+    """# Use Gemini Vision to evaluate 3 thumbnails and pick the most click-worthy.
+    # Returns the winning variant key ('a', 'b', or 'c').
+    # Evaluates: visual clarity, kid-appeal, click-worthiness, color contrast."""
+    from google import genai
+
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
+
+    # Load all 3 thumbnails as PIL images for Gemini Vision
+    images = []
+    for key in ["a", "b", "c"]:
+        if thumb_paths.get(key) and thumb_paths[key].exists():
+            images.append(Image.open(thumb_paths[key]))
+
+    if not images:
+        return "a"
+
+    prompt = (
+        "You are a YouTube thumbnail expert for kids content. "
+        "I'm showing you 3 thumbnail variants (A, B, C) for a children's quiz video. "
+        "Pick the ONE that would get the most clicks from kids aged 4-10 and their parents. "
+        "Consider: visual clarity, mystery/curiosity factor, color contrast, kid-friendliness. "
+        "Reply with ONLY the letter: A, B, or C"
+    )
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt] + images,
+        )
+        choice = response.text.strip().upper()
+        variant_map = {"A": "a", "B": "b", "C": "c"}
+        return variant_map.get(choice, "a")
+    except Exception as e:
+        print(f"[THUMBNAIL] Gemini Vision failed, defaulting to variant A: {e}")
+        return "a"

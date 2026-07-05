@@ -18,7 +18,7 @@ from narration import generate_round_narration, RoundAudio
 from audio_mixer import build_short_audio
 from video_assembler import assemble_short
 from longform_assembler import assemble_longform
-from thumbnail import generate_thumbnail
+from thumbnail import generate_thumbnail, generate_all_thumbnails, select_best_thumbnail
 from metadata import generate_metadata, save_metadata
 from sfx_generator import ensure_all_sfx
 from mascot_generator import ensure_mascot_images
@@ -191,10 +191,19 @@ def run_pipeline(category: str = None, num_rounds: int = None,
         assemble_short(quiz_pack, image_paths, silhouette_paths,
                         round_audios, audio_path, video_path)
 
-    # --- Step 7: Generate thumbnail ---
-    print("[LEO QUIZ] Step 7: Generating thumbnail...")
+    # --- Step 7: Generate 3 thumbnail variants + Gemini auto-select best ---
+    print("[LEO QUIZ] Step 7: Generating A/B thumbnail variants...")
+    thumb_paths = generate_all_thumbnails(quiz_pack, image_paths, silhouette_paths, output_dir)
+    print(f"[LEO QUIZ]   Generated 3 variants: A (split), B (mystery), C (grid)")
+
+    # Gemini Vision picks the most click-worthy thumbnail
+    best_variant = select_best_thumbnail(thumb_paths)
+    print(f"[LEO QUIZ]   Gemini selected variant: {best_variant.upper()}")
+
+    # Copy winning variant as the primary thumbnail
+    import shutil
     thumb_path = output_dir / "thumbnail.png"
-    generate_thumbnail(quiz_pack, image_paths, silhouette_paths, thumb_path)
+    shutil.copy2(thumb_paths[best_variant], thumb_path)
 
     # --- Step 8: Generate platform metadata ---
     # Generate metadata for all 4 platforms (YouTube, TikTok, Instagram, Facebook)
