@@ -82,6 +82,41 @@ EASE_TRANSITION = 0.3        # Crossfade duration
 EASE_TEXT_IN = 0.3            # Text fade-in
 EASE_ANSWER_IN = 0.4          # Answer text pop-in
 
+# --- Long-form video timing (8s per round, 16:9 landscape) ---
+# Used by longform_assembler.py for daily 10-minute videos.
+# Faster pace than shorts to keep kids engaged over 60 rounds.
+LONGFORM_ROUND_DURATION = 8.0        # Each round is 8 seconds (vs 10 for shorts)
+LONGFORM_ROUNDS = 60                  # 60 rounds for ~10 min total
+LONGFORM_TIMER_SECONDS = 5            # 5-second visible countdown timer
+LONGFORM_INTRO_DURATION = 3.0         # Intro: Leo waves + "60 QUESTIONS!" hype
+LONGFORM_OUTRO_DURATION = 5.0         # Outro: final score + star rating + subscribe CTA
+LONGFORM_SECTION_CARD_DURATION = 2.0  # Motivational milestone card duration (25/50/75%)
+
+# Long-form round sub-timings (offsets within each 8s round)
+# Every round uses identical timing — consistent pacing keeps kids engaged
+LONGFORM_SILHOUETTE_START = 0.0       # Silhouette slides in
+LONGFORM_COUNTDOWN_START = 0.5        # 5-second timer begins
+LONGFORM_REVEAL_START = 5.5           # Answer reveals (after timer)
+LONGFORM_FUN_FACT_START = 6.5         # Fun fact overlay
+LONGFORM_TRANSITION_START = 7.7       # Transition to next round
+
+# --- Mega quiz timing (7s per round, 16:9 landscape) ---
+# Used for weekly 100-round mega quizzes (15-20 min).
+# Even faster pace — pure rapid-fire guessing energy.
+MEGA_ROUND_DURATION = 7.0             # Each round is 7 seconds
+MEGA_ROUNDS = 100                     # 100 rounds for ~15 min total
+MEGA_TIMER_SECONDS = 4                # 4-second countdown (faster pressure)
+MEGA_INTRO_DURATION = 4.0             # Longer intro: "100 QUESTIONS!" + category showcase
+MEGA_OUTRO_DURATION = 6.0             # Longer outro: big score + celebration
+
+# Mega quiz round sub-timings (offsets within each 7s round)
+# Same consistent pacing principle — every round identical
+MEGA_SILHOUETTE_START = 0.0           # Fast slide-in
+MEGA_COUNTDOWN_START = 0.3            # Timer starts almost immediately
+MEGA_REVEAL_START = 4.8               # Quick reveal
+MEGA_FUN_FACT_START = 5.6             # Brief fact overlay
+MEGA_TRANSITION_START = 6.7           # Transition to next round
+
 # --- Particle system ---
 # Sparkle overlay parameters for premium depth
 PARTICLE_COUNT = 30           # Number of floating sparkles (was 20, now denser)
