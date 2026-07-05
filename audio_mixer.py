@@ -194,6 +194,11 @@ def build_short_audio(round_audios: list, music_path: Path,
         if i == num_rounds - 1 and config.SFX_FILES["applause"].exists():
             layers.append((config.SFX_FILES["applause"], reveal_ms + 200, 0.4))
 
+        # Reaction interjection after fun fact (host energy between rounds)
+        if hasattr(ra, 'reaction_path') and ra.reaction_path and Path(ra.reaction_path).exists():
+            reaction_ms = round_start_ms + int(config.SCORE_UPDATE_TIME * 1000)
+            layers.append((ra.reaction_path, reaction_ms, 0.85))
+
         # Whoosh transition near end of round
         transition_ms = round_start_ms + int(config.TRANSITION_START * 1000)
         if config.SFX_FILES["whoosh"].exists():

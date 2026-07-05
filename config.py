@@ -29,6 +29,17 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
+# --- ElevenLabs voice tuning ---
+# These settings make the voice sound energetic and natural for kids content.
+# stability: lower = more expressive/varied, higher = more consistent
+# similarity_boost: how closely to match the reference voice
+# style: 0 = neutral, 1 = maximum expressiveness (only on v2 models)
+# use_speaker_boost: enhances clarity for small speakers (phones, tablets)
+ELEVENLABS_STABILITY = 0.35          # Low stability = more natural variation
+ELEVENLABS_SIMILARITY_BOOST = 0.75   # Keep recognizable but allow expression
+ELEVENLABS_STYLE = 0.45              # Moderate style for energetic delivery
+ELEVENLABS_USE_SPEAKER_BOOST = True  # Kids watch on phones — boost clarity
+
 # --- Video dimensions ---
 SHORTS_SIZE = (1080, 1920)   # 9:16 vertical for YouTube Shorts / TikTok
 LONGFORM_SIZE = (1920, 1080) # 16:9 horizontal for YouTube long-form

@@ -22,6 +22,7 @@ from metadata import generate_metadata, save_metadata
 from sfx_generator import ensure_all_sfx
 from mascot_generator import ensure_mascot_images
 from font_downloader import ensure_fonts
+from music_downloader import ensure_music
 
 
 def run_pipeline(category: str = None, num_rounds: int = None,
@@ -58,11 +59,17 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     print("[LEO QUIZ] Step 0b: Checking mascot assets...")
     ensure_mascot_images()
 
-    # --- Step 0c: Ensure all SFX + background music exist ---
-    # Auto-generates any missing audio files from pure math (numpy)
-    # so the pipeline works out-of-the-box with zero bundled assets.
+    # --- Step 0c: Download real background music ---
+    # Downloads royalty-free tracks from Pixabay for each category.
+    # Real instruments > numpy sine waves. Skips if tracks exist.
+    print("[LEO QUIZ] Step 0c: Checking background music...")
+    ensure_music()
+
+    # --- Step 0d: Ensure all SFX exist ---
+    # Auto-generates any missing SFX from pure math (numpy).
+    # BGM generation now only runs if real music download failed.
     # Skips files that already exist — drop in your own WAVs to override.
-    print("[LEO QUIZ] Step 0c: Checking audio assets...")
+    print("[LEO QUIZ] Step 0d: Checking sound effects...")
     ensure_all_sfx()
 
     # --- Step 1: Generate quiz content via Gemini ---

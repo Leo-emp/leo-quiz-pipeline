@@ -6,7 +6,7 @@
 import pytest
 
 from narration import (
-    RoundAudio, QUESTION_PHRASES, REVEAL_PHRASES
+    RoundAudio, QUESTION_PHRASES, REVEAL_PHRASES, REACTION_PHRASES
 )
 
 
@@ -45,3 +45,34 @@ def test_phrase_rotation_varies_per_round():
     phrase_2 = QUESTION_PHRASES[2 % len(QUESTION_PHRASES)]
     assert phrase_0 != phrase_1
     assert phrase_1 != phrase_2
+
+
+def test_reaction_phrases_exist():
+    """# Should have at least 5 reaction interjections."""
+    assert len(REACTION_PHRASES) >= 5
+
+
+def test_reaction_phrases_are_short():
+    """# Reactions should be short energetic phrases (under 30 chars)."""
+    for phrase in REACTION_PHRASES:
+        assert len(phrase) < 30, f"Reaction too long: {phrase}"
+
+
+def test_round_audio_has_reaction_field():
+    """# RoundAudio should have an optional reaction_path field."""
+    from pathlib import Path
+    ra = RoundAudio(
+        question_path=Path("q.mp3"),
+        reveal_path=Path("r.mp3"),
+        fact_path=Path("f.mp3"),
+    )
+    # Default should be None
+    assert ra.reaction_path is None
+    # Should accept a path
+    ra2 = RoundAudio(
+        question_path=Path("q.mp3"),
+        reveal_path=Path("r.mp3"),
+        fact_path=Path("f.mp3"),
+        reaction_path=Path("reaction.mp3"),
+    )
+    assert ra2.reaction_path == Path("reaction.mp3")

@@ -19,6 +19,7 @@ class RoundAudio:
     fact_path: Path        # Fun fact narration audio
     fact_timestamps: list[dict] = field(default_factory=list)
     # Each timestamp: {"word": str, "start": float, "end": float}
+    reaction_path: Path = None  # Short interjection ("Amazing!", "Let's go!")
 
 
 # --- Varied narration phrases ---
@@ -41,10 +42,23 @@ REVEAL_PHRASES = [
     "Wow, it's a {answer}! Did you know that one?",
 ]
 
+# --- Reaction interjections ---
+# Short energetic phrases played between rounds.
+# Makes it feel like a real host reacting, not a text reader.
+# These are pre-generated once and cached in assets/sfx/reactions/.
+REACTION_PHRASES = [
+    "Amazing!",
+    "You're on fire!",
+    "Let's keep going!",
+    "Here comes the next one!",
+    "Get ready!",
+]
+
 
 def generate_narration(text: str, output_path: Path) -> tuple[Path, list[dict]]:
     """
     # Generate speech audio from text using ElevenLabs.
+    # UPGRADED: uses tuned voice_settings for energetic, expressive delivery.
     # Returns (audio_path, word_timestamps).
     # word_timestamps is a list of {"word", "start", "end"} dicts
     # used for synced text animation in the video.
@@ -54,11 +68,20 @@ def generate_narration(text: str, output_path: Path) -> tuple[Path, list[dict]]:
     # Initialize ElevenLabs client
     client = ElevenLabs(api_key=config.ELEVENLABS_API_KEY)
 
+    # Voice settings tuned for kids content — expressive, clear, energetic
+    voice_settings = {
+        "stability": config.ELEVENLABS_STABILITY,
+        "similarity_boost": config.ELEVENLABS_SIMILARITY_BOOST,
+        "style": config.ELEVENLABS_STYLE,
+        "use_speaker_boost": config.ELEVENLABS_USE_SPEAKER_BOOST,
+    }
+
     # Generate with word-level timestamps for text sync
     response = client.text_to_speech.convert_with_timestamps(
         text=text,
         voice_id=config.ELEVENLABS_VOICE_ID,
         model_id="eleven_multilingual_v2",
+        voice_settings=voice_settings,
     )
 
     # Collect audio bytes and word timestamps from streaming response
@@ -88,6 +111,34 @@ def generate_narration(text: str, output_path: Path) -> tuple[Path, list[dict]]:
     return output_path, word_timestamps
 
 
+def _ensure_reaction(round_idx: int) -> Path:
+    """
+    # Generate a short reaction interjection clip if it doesn't exist.
+    # Reactions are cached in assets/sfx/reactions/ and reused across videos.
+    # Each round gets a different phrase (cycles through REACTION_PHRASES).
+    # Returns the path to the reaction audio file, or None if generation fails.
+    """
+    reactions_dir = config.SFX_DIR / "reactions"
+    reactions_dir.mkdir(parents=True, exist_ok=True)
+
+    phrase_idx = round_idx % len(REACTION_PHRASES)
+    reaction_path = reactions_dir / f"reaction_{phrase_idx}.mp3"
+
+    # Already generated — reuse it
+    if reaction_path.exists():
+        return reaction_path
+
+    # Generate via ElevenLabs (same voice, short clip)
+    phrase = REACTION_PHRASES[phrase_idx]
+    try:
+        print(f"[NARRATION] Generating reaction: \"{phrase}\"")
+        generate_narration(phrase, reaction_path)
+        return reaction_path
+    except Exception as e:
+        print(f"[NARRATION] Could not generate reaction: {e}")
+        return None
+
+
 def generate_round_narration(round_data: QuizRound, category: str,
                               output_dir: Path) -> RoundAudio:
     """
@@ -115,9 +166,14 @@ def generate_round_narration(round_data: QuizRound, category: str,
         round_data.fun_fact, output_dir / "fact.mp3"
     )
 
+    # Generate reaction interjection for between rounds
+    # Cached in shared reactions dir so we only generate each phrase once
+    reaction_path = _ensure_reaction(round_idx)
+
     return RoundAudio(
         question_path=q_path,
         reveal_path=r_path,
         fact_path=f_path,
         fact_timestamps=f_timestamps,
+        reaction_path=reaction_path,
     )

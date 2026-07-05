@@ -36,3 +36,12 @@ def test_round_timing():
     assert ROUNDS_PER_SHORT == 5
     assert INTRO_DURATION == 2.0
     assert OUTRO_DURATION == 4.0
+
+def test_elevenlabs_voice_settings():
+    """# Voice tuning settings should be in valid ranges for ElevenLabs API."""
+    from config import (ELEVENLABS_STABILITY, ELEVENLABS_SIMILARITY_BOOST,
+                        ELEVENLABS_STYLE, ELEVENLABS_USE_SPEAKER_BOOST)
+    assert 0.0 <= ELEVENLABS_STABILITY <= 1.0
+    assert 0.0 <= ELEVENLABS_SIMILARITY_BOOST <= 1.0
+    assert 0.0 <= ELEVENLABS_STYLE <= 1.0
+    assert isinstance(ELEVENLABS_USE_SPEAKER_BOOST, bool)
