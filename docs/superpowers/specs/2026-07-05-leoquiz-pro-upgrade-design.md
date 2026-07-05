@@ -16,10 +16,10 @@ Transform LeoQuiz from a single-short-per-day pipeline into a **multi-format, mu
 
 | Format | Rounds | Round Duration | Timer | Total Length | Aspect Ratio |
 |--------|--------|---------------|-------|-------------|-------------|
-| Short | 5 | 10s | 3s countdown | ~56s | 9:16 vertical |
+| Short | 6 | 10s | 3s countdown | ~66s | 9:16 vertical |
 | Long-form | 60 | 8s | 5s countdown | ~10 min | 16:9 landscape |
 
-Both are **fresh content** for the same category (e.g., Monday = animals → 5-round short + 60-round long-form, all animals). NOT a compilation of shorts.
+Both are **fresh content** for the same category (e.g., Monday = animals → 6-round short + 60-round long-form, all animals). NOT a compilation of shorts. Shorts are 6 rounds (66s) to meet TikTok's 1-minute minimum for Creator Rewards Program monetization while staying under YouTube Shorts' 3-minute cap and Instagram's 90-second Reels limit.
 
 ### Weekly Output (separate trigger)
 
@@ -136,7 +136,7 @@ Displayed for 2 seconds with category gradient background, zoom-in animation, an
 def run_pipeline(category=None, num_rounds=None, video_format="short", output_dir=None):
 ```
 
-- `video_format="short"` → current behavior (5 rounds, 9:16, 56s)
+- `video_format="short"` → 6 rounds, 9:16, ~66s (TikTok monetization eligible)
 - `video_format="long"` → 60 rounds, 16:9, ~10 min
 - `video_format="mega"` → 100 rounds, 16:9, ~15-20 min
 
@@ -293,7 +293,7 @@ Generate 3 thumbnail variants per video, each with a distinct visual strategy:
 **Variant A — "Split Reveal" (current design):**
 - Diagonal split: silhouettes on left, one reveal on right
 - "CAN YOU GUESS?" glow text header
-- "5 ROUNDS!" badge
+- "6 ROUNDS!" badge
 
 **Variant B — "Giant Mystery":**
 - Single large silhouette centered (biggest possible)

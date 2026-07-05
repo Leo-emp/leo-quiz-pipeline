@@ -54,7 +54,7 @@ AUDIO_PEAK_DB = -3.0         # Peak normalization target
 INTRO_DURATION = 2.0         # Leo waves, title appears
 OUTRO_DURATION = 4.0         # Score recap, subscribe CTA
 ROUND_DURATION = 10.0        # Each quiz round is 10 seconds
-ROUNDS_PER_SHORT = 5         # 5 rounds per short = ~56s total
+ROUNDS_PER_SHORT = 6         # 6 rounds per short = ~66s total (TikTok requires 60s+ for monetization)
 COUNTDOWN_SECONDS = 3        # 3-2-1 countdown
 
 # --- Round sub-timings (offsets within each 10s round) ---
