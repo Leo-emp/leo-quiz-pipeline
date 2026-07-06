@@ -38,6 +38,12 @@ jobs:
         run: |
           pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
 
+      - name: Validate platform
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          case "$PLATFORM" in youtube|tiktok|instagram|facebook) ;; *) echo "Invalid platform: $PLATFORM" >&2; exit 1;; esac
+
       - name: Get fresh token from dashboard
         id: token
         env:
@@ -45,20 +51,42 @@ jobs:
           DASHBOARD_WEBHOOK_SECRET: ${{ secrets.DASHBOARD_WEBHOOK_SECRET }}
           PLATFORM: ${{ inputs.platform }}
         run: |
-          # Fetch the access token for whichever platform we're uploading to
+          # Fetch the access token (platform already validated above)
           TOKEN_RESPONSE=$(curl -s "$DASHBOARD_URL/api/tokens/$PLATFORM" \
             -H "x-webhook-secret: $DASHBOARD_WEBHOOK_SECRET")
-          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))")
-          echo "::add-mask::$ACCESS_TOKEN"
-          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
-          # Also extract extra fields for Instagram/Facebook
-          IG_USER_ID=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('ig_user_id',''))" 2>/dev/null || echo "")
-          PAGE_ID=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('page_id',''))" 2>/dev/null || echo "")
-          PAGE_TOKEN=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('page_access_token',''))" 2>/dev/null || echo "")
-          echo "::add-mask::$PAGE_TOKEN"
-          echo "ig_user_id=$IG_USER_ID" >> $GITHUB_OUTPUT
-          echo "page_id=$PAGE_ID" >> $GITHUB_OUTPUT
-          echo "page_access_token=$PAGE_TOKEN" >> $GITHUB_OUTPUT
+          # Parse and write outputs safely via Python
+          python3 -c "
+          import json, os, sys
+          data = json.loads('''$TOKEN_RESPONSE'''.strip() or '{}')
+          out = os.environ.get('GITHUB_OUTPUT', '')
+          access_token = data.get('access_token', '')
+          page_token = data.get('page_access_token', '')
+          ig_user_id = data.get('ig_user_id', '')
+          page_id = data.get('page_id', '')
+          # Reject values containing newlines (output injection defence)
+          for val in [access_token, page_token, ig_user_id, page_id]:
+              if '\n' in val or '\r' in val:
+                  print('Token value contains newline — aborting', file=sys.stderr)
+                  sys.exit(1)
+          # Validate numeric IDs
+          if ig_user_id and not ig_user_id.isdigit():
+              print(f'Invalid ig_user_id: {ig_user_id}', file=sys.stderr)
+              sys.exit(1)
+          if page_id and not page_id.isdigit():
+              print(f'Invalid page_id: {page_id}', file=sys.stderr)
+              sys.exit(1)
+          # Mask secrets
+          if access_token:
+              print(f'::add-mask::{access_token}')
+          if page_token:
+              print(f'::add-mask::{page_token}')
+          # Write to GITHUB_OUTPUT
+          with open(out, 'a') as f:
+              f.write(f'access_token={access_token}\n')
+              f.write(f'ig_user_id={ig_user_id}\n')
+              f.write(f'page_id={page_id}\n')
+              f.write(f'page_access_token={page_token}\n')
+          "
 
       - name: Download video from Blob
         env:
@@ -286,14 +314,19 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
         run: |
           if [ -f upload_result.json ]; then
-            UPLOAD_URL=$(python -c "import json; print(json.load(open('upload_result.json'))['url'])")
+            # Build JSON body safely via Python to avoid shell injection
+            BODY=$(python3 -c "
+          import json, os
+          result = json.load(open('upload_result.json'))
+          print(json.dumps({
+              'video_id': os.environ['VIDEO_ID'],
+              'status': 'uploaded',
+              'upload_url': result.get('url', ''),
+              'platform': os.environ['PLATFORM'],
+          }))
+          ")
             curl -X POST "$DASHBOARD_URL/api/webhook/pipeline-complete" \
               -H "Content-Type: application/json" \
               -H "x-webhook-secret: $DASHBOARD_WEBHOOK_SECRET" \
-              -d "{
-                \"video_id\": \"$VIDEO_ID\",
-                \"status\": \"uploaded\",
-                \"upload_url\": \"$UPLOAD_URL\",
-                \"platform\": \"$PLATFORM\"
-              }"
+              --data "$BODY"
           fi
