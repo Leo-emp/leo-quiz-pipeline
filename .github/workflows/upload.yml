@@ -54,20 +54,23 @@ jobs:
           # Fetch the access token (platform already validated above)
           TOKEN_RESPONSE=$(curl -s "$DASHBOARD_URL/api/tokens/$PLATFORM" \
             -H "x-webhook-secret: $DASHBOARD_WEBHOOK_SECRET")
-          # Parse and write outputs safely via Python
-          python3 -c "
+          # Parse via stdin to avoid code injection from interpolated response
+          printf '%s' "$TOKEN_RESPONSE" | python3 - <<'PARSE_TOKENS'
           import json, os, sys
-          data = json.loads('''$TOKEN_RESPONSE'''.strip() or '{}')
+
+          data = json.loads(sys.stdin.read() or '{}')
           out = os.environ.get('GITHUB_OUTPUT', '')
           access_token = data.get('access_token', '')
           page_token = data.get('page_access_token', '')
           ig_user_id = data.get('ig_user_id', '')
           page_id = data.get('page_id', '')
+
           # Reject values containing newlines (output injection defence)
           for val in [access_token, page_token, ig_user_id, page_id]:
               if '\n' in val or '\r' in val:
                   print('Token value contains newline — aborting', file=sys.stderr)
                   sys.exit(1)
+
           # Validate numeric IDs
           if ig_user_id and not ig_user_id.isdigit():
               print(f'Invalid ig_user_id: {ig_user_id}', file=sys.stderr)
@@ -75,18 +78,20 @@ jobs:
           if page_id and not page_id.isdigit():
               print(f'Invalid page_id: {page_id}', file=sys.stderr)
               sys.exit(1)
+
           # Mask secrets
           if access_token:
               print(f'::add-mask::{access_token}')
           if page_token:
               print(f'::add-mask::{page_token}')
+
           # Write to GITHUB_OUTPUT
           with open(out, 'a') as f:
               f.write(f'access_token={access_token}\n')
               f.write(f'ig_user_id={ig_user_id}\n')
               f.write(f'page_id={page_id}\n')
               f.write(f'page_access_token={page_token}\n')
-          "
+          PARSE_TOKENS
 
       - name: Download video from Blob
         env:
