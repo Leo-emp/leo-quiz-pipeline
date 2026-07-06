@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       platform:
-        description: 'Target platform (youtube, tiktok, both)'
+        description: 'Target platform (youtube, tiktok, instagram, facebook)'
         required: true
         default: 'youtube'
         type: string
@@ -38,17 +38,27 @@ jobs:
         run: |
           pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
 
-      - name: Get fresh YouTube token from dashboard
+      - name: Get fresh token from dashboard
         id: token
         env:
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
           DASHBOARD_WEBHOOK_SECRET: ${{ secrets.DASHBOARD_WEBHOOK_SECRET }}
+          PLATFORM: ${{ inputs.platform }}
         run: |
-          TOKEN_RESPONSE=$(curl -s "$DASHBOARD_URL/api/tokens/youtube" \
+          # Fetch the access token for whichever platform we're uploading to
+          TOKEN_RESPONSE=$(curl -s "$DASHBOARD_URL/api/tokens/$PLATFORM" \
             -H "x-webhook-secret: $DASHBOARD_WEBHOOK_SECRET")
-          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))")
           echo "::add-mask::$ACCESS_TOKEN"
           echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
+          # Also extract extra fields for Instagram/Facebook
+          IG_USER_ID=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('ig_user_id',''))" 2>/dev/null || echo "")
+          PAGE_ID=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('page_id',''))" 2>/dev/null || echo "")
+          PAGE_TOKEN=$(echo "$TOKEN_RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('page_access_token',''))" 2>/dev/null || echo "")
+          echo "::add-mask::$PAGE_TOKEN"
+          echo "ig_user_id=$IG_USER_ID" >> $GITHUB_OUTPUT
+          echo "page_id=$PAGE_ID" >> $GITHUB_OUTPUT
+          echo "page_access_token=$PAGE_TOKEN" >> $GITHUB_OUTPUT
 
       - name: Download video from Blob
         env:
@@ -56,8 +66,9 @@ jobs:
         run: |
           curl -o video.mp4 "$VIDEO_BLOB_URL"
 
+      # ── YouTube Upload ──
       - name: Upload to YouTube
-        if: inputs.platform == 'youtube' || inputs.platform == 'both'
+        if: inputs.platform == 'youtube'
         env:
           YOUTUBE_ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
           METADATA_JSON: ${{ inputs.metadata_json }}
@@ -68,15 +79,11 @@ jobs:
           from googleapiclient.http import MediaFileUpload
           from google.oauth2.credentials import Credentials
 
-          # Parse metadata from env var (avoids shell injection)
           metadata = json.loads(os.environ["METADATA_JSON"])
-
-          # Build YouTube client with the dashboard-provided access token
           access_token = os.environ["YOUTUBE_ACCESS_TOKEN"]
           credentials = Credentials(token=access_token)
           youtube = build("youtube", "v3", credentials=credentials)
 
-          # Upload video — COPPA compliant (made for kids)
           body = {
               "snippet": {
                   "title": metadata.get("title", "Leo Quiz"),
@@ -97,16 +104,186 @@ jobs:
           video_url = f"https://youtube.com/watch?v={response['id']}"
           print(f"Uploaded: {video_url}")
 
-          # Write URL for webhook callback
           with open("upload_result.json", "w") as f:
-              json.dump({"url": video_url, "video_id": response["id"]}, f)
+              json.dump({"url": video_url, "platform": "youtube"}, f)
           UPLOAD_SCRIPT
 
+      # ── TikTok Upload ──
+      - name: Upload to TikTok
+        if: inputs.platform == 'tiktok'
+        env:
+          TIKTOK_ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
+          METADATA_JSON: ${{ inputs.metadata_json }}
+        run: |
+          python - << 'UPLOAD_SCRIPT'
+          import json, os, requests
+
+          metadata = json.loads(os.environ["METADATA_JSON"])
+          access_token = os.environ["TIKTOK_ACCESS_TOKEN"]
+          headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+          # Step 1: Initialize direct post upload
+          init_body = {
+              "post_info": {
+                  "title": metadata.get("title", "Leo Quiz")[:150],
+                  "privacy_level": "PUBLIC_TO_EVERYONE",
+                  "disable_duet": False,
+                  "disable_comment": False,
+                  "disable_stitch": False,
+                  "video_cover_timestamp_ms": 1000,
+              },
+              "source_info": {"source": "FILE_UPLOAD", "video_size": os.path.getsize("video.mp4")},
+          }
+
+          init_resp = requests.post(
+              "https://open.tiktokapis.com/v2/post/publish/video/init/",
+              headers=headers, json=init_body
+          )
+          init_data = init_resp.json()
+          upload_url = init_data.get("data", {}).get("upload_url", "")
+
+          if not upload_url:
+              print(f"TikTok init failed: {init_data}")
+              with open("upload_result.json", "w") as f:
+                  json.dump({"url": "", "platform": "tiktok", "error": "init_failed"}, f)
+              exit(0)
+
+          # Step 2: Upload video binary
+          with open("video.mp4", "rb") as f:
+              video_data = f.read()
+          chunk_headers = {
+              "Content-Type": "video/mp4",
+              "Content-Range": f"bytes 0-{len(video_data)-1}/{len(video_data)}",
+          }
+          upload_resp = requests.put(upload_url, headers=chunk_headers, data=video_data)
+
+          publish_id = init_data.get("data", {}).get("publish_id", "")
+          print(f"TikTok upload complete, publish_id: {publish_id}")
+
+          with open("upload_result.json", "w") as f:
+              json.dump({"url": f"https://www.tiktok.com/@/video/{publish_id}", "platform": "tiktok"}, f)
+          UPLOAD_SCRIPT
+
+      # ── Instagram Reels Upload ──
+      - name: Upload to Instagram
+        if: inputs.platform == 'instagram'
+        env:
+          IG_ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
+          IG_USER_ID: ${{ steps.token.outputs.ig_user_id }}
+          METADATA_JSON: ${{ inputs.metadata_json }}
+          VIDEO_BLOB_URL: ${{ inputs.video_blob_url }}
+        run: |
+          python - << 'UPLOAD_SCRIPT'
+          import json, os, time, requests
+
+          metadata = json.loads(os.environ["METADATA_JSON"])
+          access_token = os.environ["IG_ACCESS_TOKEN"]
+          ig_user_id = os.environ["IG_USER_ID"]
+          video_url = os.environ["VIDEO_BLOB_URL"]
+
+          caption = metadata.get("title", "Leo Quiz")
+          if metadata.get("description"):
+              caption += "\n\n" + metadata["description"]
+          hashtags = metadata.get("hashtags", metadata.get("tags", []))
+          if hashtags:
+              caption += "\n\n" + " ".join(f"#{t}" if not t.startswith("#") else t for t in hashtags[:30])
+
+          # Step 1: Create media container
+          container_resp = requests.post(
+              f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
+              data={
+                  "media_type": "REELS",
+                  "video_url": video_url,
+                  "caption": caption[:2200],
+                  "access_token": access_token,
+              }
+          )
+          container_data = container_resp.json()
+          container_id = container_data.get("id", "")
+
+          if not container_id:
+              print(f"Instagram container failed: {container_data}")
+              with open("upload_result.json", "w") as f:
+                  json.dump({"url": "", "platform": "instagram", "error": "container_failed"}, f)
+              exit(0)
+
+          # Step 2: Poll until container is ready
+          for _ in range(30):
+              status_resp = requests.get(
+                  f"https://graph.facebook.com/v21.0/{container_id}",
+                  params={"fields": "status_code", "access_token": access_token}
+              )
+              status = status_resp.json().get("status_code", "")
+              if status == "FINISHED":
+                  break
+              if status == "ERROR":
+                  print("Instagram container processing failed")
+                  with open("upload_result.json", "w") as f:
+                      json.dump({"url": "", "platform": "instagram", "error": "processing_failed"}, f)
+                  exit(0)
+              time.sleep(10)
+
+          # Step 3: Publish
+          publish_resp = requests.post(
+              f"https://graph.facebook.com/v21.0/{ig_user_id}/media_publish",
+              data={"creation_id": container_id, "access_token": access_token}
+          )
+          publish_data = publish_resp.json()
+          media_id = publish_data.get("id", "")
+          media_url = f"https://www.instagram.com/reel/{media_id}/" if media_id else ""
+
+          print(f"Instagram upload complete: {media_url}")
+          with open("upload_result.json", "w") as f:
+              json.dump({"url": media_url, "platform": "instagram"}, f)
+          UPLOAD_SCRIPT
+
+      # ── Facebook Reels Upload ──
+      - name: Upload to Facebook
+        if: inputs.platform == 'facebook'
+        env:
+          FB_PAGE_TOKEN: ${{ steps.token.outputs.page_access_token }}
+          FB_PAGE_ID: ${{ steps.token.outputs.page_id }}
+          METADATA_JSON: ${{ inputs.metadata_json }}
+          VIDEO_BLOB_URL: ${{ inputs.video_blob_url }}
+        run: |
+          python - << 'UPLOAD_SCRIPT'
+          import json, os, requests
+
+          metadata = json.loads(os.environ["METADATA_JSON"])
+          page_token = os.environ["FB_PAGE_TOKEN"]
+          page_id = os.environ["FB_PAGE_ID"]
+          video_url = os.environ["VIDEO_BLOB_URL"]
+
+          description = metadata.get("title", "Leo Quiz")
+          if metadata.get("description"):
+              description += "\n\n" + metadata["description"]
+
+          # Upload as Reel via Graph API
+          resp = requests.post(
+              f"https://graph.facebook.com/v21.0/{page_id}/video_reels",
+              data={
+                  "upload_phase": "finish",
+                  "video_url": video_url,
+                  "description": description[:8000],
+                  "access_token": page_token,
+              }
+          )
+          data = resp.json()
+          video_id = data.get("id", "")
+          fb_url = f"https://www.facebook.com/reel/{video_id}" if video_id else ""
+
+          print(f"Facebook upload complete: {fb_url}")
+          with open("upload_result.json", "w") as f:
+              json.dump({"url": fb_url, "platform": "facebook"}, f)
+          UPLOAD_SCRIPT
+
+      # ── Notify dashboard of result ──
       - name: Notify dashboard of upload result
         env:
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
           DASHBOARD_WEBHOOK_SECRET: ${{ secrets.DASHBOARD_WEBHOOK_SECRET }}
           VIDEO_ID: ${{ inputs.video_id }}
+          PLATFORM: ${{ inputs.platform }}
         run: |
           if [ -f upload_result.json ]; then
             UPLOAD_URL=$(python -c "import json; print(json.load(open('upload_result.json'))['url'])")
@@ -116,6 +293,7 @@ jobs:
               -d "{
                 \"video_id\": \"$VIDEO_ID\",
                 \"status\": \"uploaded\",
-                \"upload_url\": \"$UPLOAD_URL\"
+                \"upload_url\": \"$UPLOAD_URL\",
+                \"platform\": \"$PLATFORM\"
               }"
           fi
