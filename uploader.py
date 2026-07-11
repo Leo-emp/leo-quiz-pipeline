@@ -12,14 +12,105 @@
 # Token data is passed as dict (loaded from Vercel Blob in dashboard).
 # ============================================================
 import json
+import os
 import time
+import functools
+import logging
 from pathlib import Path
 
 import requests
 
 import config
 
+logger = logging.getLogger(__name__)
 
+
+def _upload_to_blob(video_path: Path) -> str:
+    """
+    # Upload a video file to Vercel Blob and return the public URL.
+    # Required for Instagram Graph API which needs a publicly accessible URL.
+    # Falls back to empty string if BLOB_READ_WRITE_TOKEN is not set.
+    """
+    token = config.BLOB_READ_WRITE_TOKEN if hasattr(config, "BLOB_READ_WRITE_TOKEN") else os.environ.get("BLOB_READ_WRITE_TOKEN", "")
+    if not token:
+        logger.error("[UPLOAD] No BLOB_READ_WRITE_TOKEN — cannot upload to Blob for Instagram")
+        return ""
+
+    blob_name = f"ig-upload/{video_path.name}"
+    with open(video_path, "rb") as f:
+        resp = requests.put(
+            f"https://blob.vercel-storage.com/{blob_name}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "x-content-type": "video/mp4",
+                "x-api-version": "7",
+            },
+            data=f,
+        )
+
+    if resp.ok:
+        url = resp.json().get("url", "")
+        logger.info(f"[UPLOAD] Video uploaded to Blob: {url}")
+        return url
+
+    logger.error(f"[UPLOAD] Blob upload failed: {resp.status_code} {resp.text}")
+    return ""
+
+
+def _delete_from_blob(blob_url: str) -> None:
+    """Clean up temporary Blob upload after Instagram post."""
+    token = config.BLOB_READ_WRITE_TOKEN if hasattr(config, "BLOB_READ_WRITE_TOKEN") else os.environ.get("BLOB_READ_WRITE_TOKEN", "")
+    if not token or not blob_url:
+        return
+    try:
+        requests.post(
+            "https://blob.vercel-storage.com/delete",
+            headers={"Authorization": f"Bearer {token}", "x-api-version": "7"},
+            json={"urls": [blob_url]},
+        )
+    except Exception:
+        pass
+
+
+def retry_upload(max_attempts=3, backoff_base=2):
+    """
+    # Retry decorator for upload functions.
+    # Retries on transient errors with exponential backoff (2s, 4s, 8s).
+    # Skips retry for auth errors (401/403) since those won't self-heal.
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    result = fn(*args, **kwargs)
+                    if result:
+                        return result
+                    if attempt < max_attempts:
+                        delay = backoff_base ** attempt
+                        logger.warning(f"[UPLOAD] {fn.__name__} returned empty on attempt {attempt}, retrying in {delay}s...")
+                        time.sleep(delay)
+                        continue
+                    return result
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+                    if any(code in error_str for code in ["401", "403", "unauthorized", "forbidden"]):
+                        logger.error(f"[UPLOAD] {fn.__name__} auth error (no retry): {e}")
+                        return ""
+                    if attempt < max_attempts:
+                        delay = backoff_base ** attempt
+                        logger.warning(f"[UPLOAD] {fn.__name__} attempt {attempt} failed: {e}, retrying in {delay}s...")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"[UPLOAD] {fn.__name__} failed after {max_attempts} attempts: {e}")
+            return ""
+        return wrapper
+    return decorator
+
+
+@retry_upload(max_attempts=3)
 def upload_youtube(video_path: Path, metadata_path: Path,
                     thumbnail_path: Path = None) -> str:
     """
@@ -81,6 +172,7 @@ def upload_youtube(video_path: Path, metadata_path: Path,
     return video_url
 
 
+@retry_upload(max_attempts=3)
 def upload_tiktok(video_path: Path, metadata_path: Path,
                    token: dict = None) -> str:
     """
@@ -154,10 +246,11 @@ def upload_tiktok(video_path: Path, metadata_path: Path,
         return f"https://www.tiktok.com/@leoquiz/video/{publish_id}"
 
     except Exception as e:
-        print(f"[UPLOAD] TikTok upload failed: {e}")
-        return ""
+        logger.error(f"[UPLOAD] TikTok upload failed: {e}")
+        raise
 
 
+@retry_upload(max_attempts=3)
 def upload_instagram(video_path: Path, metadata_path: Path,
                       token: dict = None) -> str:
     """
@@ -190,18 +283,25 @@ def upload_instagram(video_path: Path, metadata_path: Path,
         if hashtags:
             caption += "\n\n" + " ".join(hashtags)
 
+        # Upload to Vercel Blob first — Instagram API needs a public URL, not a local path
+        blob_url = _upload_to_blob(video_path)
+        if not blob_url:
+            logger.error("[UPLOAD] Instagram: cannot upload without public video URL")
+            return ""
+
         # Step 1: Create Reels media container
         create_url = f"https://graph.facebook.com/v21.0/{ig_user_id}/media"
         create_resp = requests.post(create_url, params={
             "media_type": "REELS",
-            "video_url": str(video_path),
+            "video_url": blob_url,
             "caption": caption,
             "share_to_feed": "true",
             "access_token": access_token,
         })
 
         if not create_resp.ok:
-            print(f"[UPLOAD] Instagram container failed: {create_resp.status_code}")
+            logger.error(f"[UPLOAD] Instagram container failed: {create_resp.status_code}")
+            _delete_from_blob(blob_url)
             return ""
 
         container_id = create_resp.json().get("id", "")
@@ -236,14 +336,18 @@ def upload_instagram(video_path: Path, metadata_path: Path,
         media_id = pub_resp.json().get("id", "")
         media_url = f"https://www.instagram.com/reel/{media_id}/"
 
+        _delete_from_blob(blob_url)
         print(f"[UPLOAD] Instagram: {media_url}")
         return media_url
 
     except Exception as e:
-        print(f"[UPLOAD] Instagram upload failed: {e}")
-        return ""
+        if 'blob_url' in locals():
+            _delete_from_blob(blob_url)
+        logger.error(f"[UPLOAD] Instagram upload failed: {e}")
+        raise
 
 
+@retry_upload(max_attempts=3)
 def upload_facebook(video_path: Path, metadata_path: Path,
                      token: dict = None) -> str:
     """
@@ -294,5 +398,5 @@ def upload_facebook(video_path: Path, metadata_path: Path,
         return post_url
 
     except Exception as e:
-        print(f"[UPLOAD] Facebook upload failed: {e}")
-        return ""
+        logger.error(f"[UPLOAD] Facebook upload failed: {e}")
+        raise

@@ -1,16 +1,15 @@
 # compiler.py
 # ============================================================
-# Weekly long-form video compiler.
-# Collects all short-form rounds from the past week,
-# generates bonus rounds, and renders a 15-20 minute
-# compilation at 16:9 with score tracking and sections.
+# Utilities for collecting short-form quiz rounds from daily
+# output directories. Used by longform_assembler.py for
+# weekly compilations.
 # ============================================================
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import config
-from quiz_generator import QuizPack, QuizRound, generate_quiz_pack
+from quiz_generator import QuizRound
 
 
 def collect_week_rounds(day_dirs: list[Path]) -> list[dict]:
@@ -70,34 +69,3 @@ def find_week_dirs(shorts_dir: Path = None) -> list[Path]:
     return sorted(week_dirs)
 
 
-def compile_longform(week_dirs: list[Path] = None,
-                      output_path: Path = None) -> Path:
-    """
-    # Compile a long-form video from the week's shorts + bonus rounds.
-    # Renders at 16:9 (1920x1080) with sections, score counter, progress bar.
-    """
-    if week_dirs is None:
-        week_dirs = find_week_dirs()
-    if output_path is None:
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        output_path = config.LONGFORM_DIR / f"{date_str}_compilation"
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Collect existing rounds from daily videos
-    existing_rounds = collect_week_rounds(week_dirs)
-    print(f"[COMPILER] Found {len(existing_rounds)} rounds from {len(week_dirs)} daily videos")
-
-    # Generate bonus rounds for long-form exclusivity (target 80 total)
-    bonus_count = max(0, 80 - len(existing_rounds))
-    if bonus_count > 0:
-        print(f"[COMPILER] Generating {bonus_count} bonus rounds...")
-        bonus_pack = generate_quiz_pack("mixed", bonus_count)
-
-    print(f"[COMPILER] Compiling long-form video...")
-    # Long-form assembly with section title cards, score tracking,
-    # progress bar, and difficulty sections will be expanded
-    # after short-form pipeline is validated end-to-end
-
-    video_path = output_path / "longform.mp4"
-    print(f"[COMPILER] Long-form compilation: {video_path}")
-    return video_path

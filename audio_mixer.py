@@ -65,6 +65,20 @@ def mix_layers(layers: list[tuple[Path, int, float]],
     return output_path
 
 
+def _get_audio_duration_ms(audio_path: Path, fallback: int) -> int:
+    """
+    # Returns the duration of an audio file in milliseconds.
+    # Falls back to the provided estimate if the file is missing or unreadable.
+    """
+    try:
+        if audio_path and audio_path.exists():
+            audio = AudioSegment.from_file(str(audio_path))
+            return len(audio)
+    except Exception:
+        pass
+    return fallback
+
+
 def _duck_music_during_voice(music_path: Path, voice_regions: list[tuple[int, int]],
                              total_ms: int, output_path: Path,
                              normal_vol: float = 0.18,
@@ -126,18 +140,21 @@ def build_short_audio(round_audios: list, music_path: Path,
     layers = []
     num_rounds = len(round_audios)
 
-    # Collect voice regions for dynamic ducking
+    # Collect voice regions for dynamic ducking using actual audio durations
     voice_regions = []
     for i, ra in enumerate(round_audios):
         round_start_ms = int((config.INTRO_DURATION + i * config.ROUND_DURATION) * 1000)
-        # Question voice (~1.5s estimate)
-        voice_regions.append((round_start_ms, round_start_ms + 2000))
-        # Reveal voice
+
+        # Measure actual narration duration, fall back to estimates if file is missing
+        q_dur = _get_audio_duration_ms(ra.question_path, fallback=2000)
+        r_dur = _get_audio_duration_ms(ra.reveal_path, fallback=1500)
+        f_dur = _get_audio_duration_ms(ra.fact_path, fallback=2500)
+
+        voice_regions.append((round_start_ms, round_start_ms + q_dur))
         reveal_ms = round_start_ms + int(config.REVEAL_START * 1000)
-        voice_regions.append((reveal_ms, reveal_ms + 1500))
-        # Fun fact voice
+        voice_regions.append((reveal_ms, reveal_ms + r_dur))
         fact_ms = round_start_ms + int(config.FUN_FACT_START * 1000)
-        voice_regions.append((fact_ms, fact_ms + 2500))
+        voice_regions.append((fact_ms, fact_ms + f_dur))
 
     # --- Layer 1: Background music with dynamic ducking ---
     if music_path and music_path.exists():
