@@ -4,169 +4,107 @@
 # Baloo 2 (Bold) — rounded, playful, perfect for titles
 # Fredoka One — thick, bubbly, great for countdown numbers
 # Both are OFL-licensed (free for any use).
+#
+# FIXED: Uses Google Fonts CSS2 API with .ttf user-agent trick
+# instead of ZIP endpoint (which was returning invalid ZIPs).
 # ============================================================
-import io
+import re
 import urllib.request
 import urllib.error
-import zipfile
 from pathlib import Path
 
 import config
 
-# Google Fonts download API — returns ZIP with all weights
-FONT_URLS = {
-    "Baloo2": "https://fonts.google.com/download?family=Baloo+2",
-    "FredokaOne": "https://fonts.google.com/download?family=Fredoka",
+# Google Fonts CSS2 API — returns CSS with direct .ttf download URLs
+# Using a legacy user-agent forces Google to serve .ttf instead of .woff2
+FONT_CSS_URLS = {
+    # Baloo 2 Bold weight (700) — rounded, kid-friendly title font
+    "Baloo2-Bold.ttf": "https://fonts.googleapis.com/css2?family=Baloo+2:wght@700",
+    # Fredoka Bold — thick, bubbly display font for numbers/headlines
+    "FredokaOne-Regular.ttf": "https://fonts.googleapis.com/css2?family=Fredoka:wght@600",
 }
 
-# Which specific file we want from each ZIP
-FONT_FILE_MAP = {
-    "Baloo2": {
-        "target_name": "Baloo2-Bold.ttf",
-        # Inside the ZIP, the bold weight may be named differently
-        "search_patterns": ["Baloo2-Bold.ttf", "Baloo2-SemiBold.ttf",
-                            "static/Baloo2-Bold.ttf", "Baloo2-ExtraBold.ttf"],
-    },
-    "FredokaOne": {
-        "target_name": "FredokaOne-Regular.ttf",
-        "search_patterns": ["FredokaOne-Regular.ttf", "Fredoka-SemiBold.ttf",
-                            "static/Fredoka-SemiBold.ttf", "Fredoka-Bold.ttf",
-                            "static/Fredoka-Bold.ttf"],
-    },
-}
+# User-agent that triggers .ttf responses from Google Fonts
+# (Modern browsers get .woff2 which PIL can't use)
+LEGACY_UA = "Mozilla/4.0 (Windows NT 6.1) AppleWebKit/537.36"
 
 
-def _download_and_extract(font_key: str) -> bool:
+def _download_font_via_css(target_name: str, css_url: str) -> bool:
     """
-    # Download a font family ZIP from Google Fonts and extract the
-    # specific weight we need into assets/fonts/.
+    # Download a font file using Google Fonts CSS2 API.
+    # Step 1: Fetch CSS file (contains @font-face with .ttf URL)
+    # Step 2: Extract the .ttf URL from the CSS
+    # Step 3: Download the .ttf file directly
     # Returns True if successful.
     """
-    url = FONT_URLS[font_key]
-    file_info = FONT_FILE_MAP[font_key]
-    target_path = config.FONTS_DIR / file_info["target_name"]
+    target_path = config.FONTS_DIR / target_name
 
+    # Already have this font — skip
     if target_path.exists():
-        return True  # Already have it
+        return True
 
-    print(f"[FONTS] Downloading {font_key} from Google Fonts...")
+    print(f"[FONTS] Downloading {target_name} via Google Fonts CSS API...")
     try:
-        # Download the ZIP file
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "LeoQuiz-Pipeline/1.0"
-        })
-        response = urllib.request.urlopen(req, timeout=30)
-        zip_data = response.read()
+        # Step 1: Fetch CSS with legacy user-agent to get .ttf URLs
+        req = urllib.request.Request(css_url, headers={"User-Agent": LEGACY_UA})
+        response = urllib.request.urlopen(req, timeout=15)
+        css_text = response.read().decode("utf-8")
 
-        # Open the ZIP and find the font file we need
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            # List all files in the ZIP for matching
-            all_files = zf.namelist()
+        # Step 2: Extract .ttf URL from @font-face src: url(...)
+        # Pattern matches: url(https://fonts.gstatic.com/s/.../font.ttf)
+        ttf_urls = re.findall(r'url\((https://fonts\.gstatic\.com/[^)]+\.ttf)\)', css_text)
 
-            # Try each search pattern to find our target file
-            found = False
-            for pattern in file_info["search_patterns"]:
-                for zip_name in all_files:
-                    if zip_name.endswith(pattern) or zip_name == pattern:
-                        # Extract just this file
-                        font_data = zf.read(zip_name)
-                        target_path.parent.mkdir(parents=True, exist_ok=True)
-                        target_path.write_bytes(font_data)
-                        print(f"[FONTS] Saved {file_info['target_name']} "
-                              f"({len(font_data) // 1024}KB)")
-                        found = True
-                        break
-                if found:
-                    break
+        if not ttf_urls:
+            print(f"[FONTS] No .ttf URL found in CSS for {target_name}")
+            return False
 
-            if not found:
-                # Fallback: grab any .ttf file from the ZIP (bold preferred)
-                ttf_files = [f for f in all_files if f.endswith(".ttf")]
-                # Prefer files with "Bold" or "SemiBold" in the name
-                bold_files = [f for f in ttf_files
-                              if "Bold" in f or "SemiBold" in f]
-                pick = bold_files[0] if bold_files else (ttf_files[0] if ttf_files else None)
-                if pick:
-                    font_data = zf.read(pick)
-                    target_path.write_bytes(font_data)
-                    print(f"[FONTS] Saved {file_info['target_name']} from {pick}")
-                    found = True
+        # Step 3: Download the .ttf file (use first match)
+        ttf_url = ttf_urls[0]
+        ttf_req = urllib.request.Request(ttf_url, headers={"User-Agent": LEGACY_UA})
+        ttf_data = urllib.request.urlopen(ttf_req, timeout=30).read()
 
-            return found
+        # Save to assets/fonts/
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(ttf_data)
+        print(f"[FONTS] Saved {target_name} ({len(ttf_data) // 1024}KB)")
+        return True
 
     except urllib.error.URLError as e:
-        print(f"[FONTS] Download failed for {font_key}: {e}")
-        return False
-    except zipfile.BadZipFile:
-        print(f"[FONTS] Invalid ZIP received for {font_key}")
+        print(f"[FONTS] Download failed for {target_name}: {e}")
         return False
     except Exception as e:
-        print(f"[FONTS] Unexpected error downloading {font_key}: {e}")
+        print(f"[FONTS] Unexpected error downloading {target_name}: {e}")
         return False
-
-
-def _try_system_fonts() -> list[str]:
-    """
-    # Check if the required fonts are available as system fonts.
-    # Returns list of font names that were found on the system.
-    """
-    from PIL import ImageFont
-    found = []
-    system_font_names = {
-        "Baloo2-Bold.ttf": ["Baloo2-Bold", "Baloo 2 Bold", "Baloo2Bold"],
-        "FredokaOne-Regular.ttf": ["FredokaOne-Regular", "Fredoka One",
-                                    "FredokaOne", "Fredoka-SemiBold"],
-    }
-
-    for target_file, alt_names in system_font_names.items():
-        target_path = config.FONTS_DIR / target_file
-        if target_path.exists():
-            found.append(target_file)
-            continue
-
-        # Try loading from system font directories
-        for name in alt_names:
-            try:
-                font = ImageFont.truetype(f"{name}.ttf", 48)
-                # If we can load it, copy it to our assets directory
-                # (PIL doesn't expose the path, so we just note it works)
-                found.append(target_file)
-                print(f"[FONTS] Found {name} as system font")
-                break
-            except (OSError, IOError):
-                continue
-
-    return found
 
 
 def ensure_fonts():
     """
     # Download any missing fonts from Google Fonts.
     # Called automatically at pipeline startup.
-    # Falls back to system fonts, then to PIL default if download fails.
+    # Uses CSS2 API for reliable .ttf downloads.
+    # Falls back to system Arial if downloads fail.
     """
     config.FONTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Check what we already have
-    baloo_path = config.FONTS_DIR / "Baloo2-Bold.ttf"
-    fredoka_path = config.FONTS_DIR / "FredokaOne-Regular.ttf"
-
-    if baloo_path.exists() and fredoka_path.exists():
+    # Check if all fonts are already present
+    all_present = all(
+        (config.FONTS_DIR / name).exists()
+        for name in FONT_CSS_URLS
+    )
+    if all_present:
         print("[FONTS] All fonts already installed")
         return
 
+    # Download each missing font
     downloaded = []
     failed = []
-
-    for font_key in FONT_URLS:
-        target = FONT_FILE_MAP[font_key]["target_name"]
-        if (config.FONTS_DIR / target).exists():
+    for target_name, css_url in FONT_CSS_URLS.items():
+        if (config.FONTS_DIR / target_name).exists():
             continue
-
-        if _download_and_extract(font_key):
-            downloaded.append(target)
+        if _download_font_via_css(target_name, css_url):
+            downloaded.append(target_name)
         else:
-            failed.append(target)
+            failed.append(target_name)
 
     if downloaded:
         print(f"[FONTS] Downloaded {len(downloaded)} fonts: {', '.join(downloaded)}")

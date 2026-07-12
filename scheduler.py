@@ -3,8 +3,13 @@
 # Scheduling for automated daily/weekly video generation.
 # Supports local cron via APScheduler and manual triggers.
 #
-# Daily: generate one short (66s) + one long-form (10min) for today's category
-# Weekly: generate a 100-round mega quiz (~15min)
+# UPGRADED for speed quiz format (top creator pipeline):
+# Daily: generate one speed quiz (120 rounds, ~16min) — the main content
+# Also generates a short (66s) for Shorts/TikTok/Reels from same category
+# Weekly: mega quiz (100 rounds) as the "event" video
+#
+# Category rotation: Monday-Saturday = 6 categories, Sunday = mixed
+# Never-repeat: history.json tracks all used answers + video_log
 # ============================================================
 import argparse
 from datetime import datetime
@@ -16,22 +21,25 @@ from main import run_pipeline
 
 
 def daily_job():
-    """# Generate one short + one long-form quiz video for today's category.
-    # Both use the same day-of-week category rotation.
-    # Short = 6 rounds (66s), Long = 60 rounds (~10min)."""
+    """
+    # Generate one speed quiz + one short for today's category.
+    # Speed quiz = 120 rounds, ~16min, 16:9 — the MAIN daily upload.
+    # Short = 6 rounds, 66s, 9:16 — for Shorts/TikTok/Reels reach.
+    # Both use day-of-week category rotation for variety.
+    """
     print(f"\n{'='*60}")
     print(f"[SCHEDULER] Daily job started at {datetime.now()}")
     print(f"{'='*60}")
     try:
-        # Short-form (66s, 6 rounds, 9:16 vertical)
+        # Speed quiz — the main daily video (this is what gets millions of views)
+        print("[SCHEDULER] Generating speed quiz video (120 rounds)...")
+        speed_path = run_pipeline(video_format="speed")
+        print(f"[SCHEDULER] Speed quiz complete: {speed_path}")
+
+        # Short-form — for reach on Shorts/TikTok/Reels
         print("[SCHEDULER] Generating short-form video...")
         short_path = run_pipeline(video_format="short")
         print(f"[SCHEDULER] Short complete: {short_path}")
-
-        # Long-form (10min, 60 rounds, 16:9 landscape — same category)
-        print("[SCHEDULER] Generating long-form video...")
-        long_path = run_pipeline(video_format="long")
-        print(f"[SCHEDULER] Long-form complete: {long_path}")
 
         print(f"[SCHEDULER] Daily job complete — 2 videos generated")
     except Exception as e:
@@ -41,8 +49,7 @@ def daily_job():
 
 
 def weekly_job():
-    """# Generate a mega quiz (100 rounds, 16:9 landscape, ~15 min).
-    # Runs weekly — the big event video for maximum watch time."""
+    """# Generate a mega quiz (100 rounds, ~15 min) as the weekly event."""
     print(f"\n{'='*60}")
     print(f"[SCHEDULER] Weekly mega quiz started at {datetime.now()}")
     print(f"{'='*60}")
@@ -59,15 +66,15 @@ def start_scheduler():
     """# Start the APScheduler with daily and weekly cron jobs."""
     scheduler = BlockingScheduler()
 
-    # Daily at 6:00 AM UTC — generates one short + one long-form video
+    # Daily at 6:00 AM UTC — speed quiz + short
     scheduler.add_job(daily_job, "cron", hour=6, minute=0, id="daily_quiz")
 
-    # Weekly on Sunday at 8:00 AM UTC — generates mega quiz (100 rounds)
+    # Weekly on Sunday at 8:00 AM UTC — mega quiz
     scheduler.add_job(weekly_job, "cron", day_of_week="sun", hour=8, minute=0,
                       id="weekly_mega")
 
     print("[SCHEDULER] Leo Quiz scheduler started")
-    print("[SCHEDULER] Daily: 6:00 AM UTC (short + long-form)")
+    print("[SCHEDULER] Daily: 6:00 AM UTC (speed quiz + short)")
     print("[SCHEDULER] Weekly: Sunday 8:00 AM UTC (mega quiz)")
     print("[SCHEDULER] Press Ctrl+C to stop")
 
@@ -75,10 +82,9 @@ def start_scheduler():
 
 
 if __name__ == "__main__":
-    # CLI: run a job immediately or start the scheduler
     parser = argparse.ArgumentParser(description="Leo Quiz Scheduler")
-    parser.add_argument("--now", choices=["short", "long", "mega", "daily"],
-                        help="Run a job immediately: short, long, mega, or daily (short+long)")
+    parser.add_argument("--now", choices=["short", "long", "mega", "speed", "daily"],
+                        help="Run a job immediately")
     args = parser.parse_args()
 
     if args.now == "short":
@@ -87,6 +93,8 @@ if __name__ == "__main__":
         run_pipeline(video_format="long")
     elif args.now == "mega":
         weekly_job()
+    elif args.now == "speed":
+        run_pipeline(video_format="speed")
     elif args.now == "daily":
         daily_job()
     else:

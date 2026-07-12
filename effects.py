@@ -45,21 +45,26 @@ class ConfettiBurst:
             (0, 199, 190),    # Teal
         ]
 
-        # Generate particle properties at spawn time
+        # Generate particle properties — mix of shapes including ribbons
         self.particles = []
         for _ in range(count):
-            angle = rng.uniform(0, 2 * math.pi)  # Random direction
-            speed = rng.uniform(300, 900)          # How fast it flies
+            angle = rng.uniform(0, 2 * math.pi)
+            speed = rng.uniform(300, 900)
             self.particles.append({
-                "x": center_x,                       # Start at center
+                "x": center_x,
                 "y": center_y,
-                "vx": math.cos(angle) * speed,       # X velocity component
-                "vy": math.sin(angle) * speed * -0.8, # Y velocity (mostly upward initially)
-                "size": rng.randint(6, 14),           # Particle size in pixels
+                "vx": math.cos(angle) * speed,
+                "vy": math.sin(angle) * speed * -0.8,
+                "size": rng.randint(6, 14),
                 "color": rng.choice(self.colors),
-                "rotation": rng.uniform(0, 360),      # Initial rotation angle
-                "rot_speed": rng.uniform(-500, 500),   # Rotation speed (deg/sec)
-                "shape": rng.choice(["rect", "circle", "star"]),
+                "rotation": rng.uniform(0, 360),
+                "rot_speed": rng.uniform(-500, 500),
+                # More shape variety — ribbons tumble like real confetti
+                "shape": rng.choice(["ribbon", "ribbon", "circle", "star", "rect"]),
+                # Ribbon aspect ratio — tall and thin like real confetti strips
+                "aspect": rng.uniform(2.0, 4.0),
+                # Air resistance — ribbons flutter and slow down
+                "drag": rng.uniform(0.6, 1.0),
             })
 
     def is_active(self, t: float) -> bool:
@@ -83,25 +88,41 @@ class ConfettiBurst:
         draw = ImageDraw.Draw(overlay)
 
         for p in self.particles:
-            # Physics: position = initial + velocity*t + 0.5*gravity*t²
-            px = int(p["x"] + p["vx"] * elapsed)
-            py = int(p["y"] + p["vy"] * elapsed + 0.5 * self.gravity * elapsed ** 2)
+            drag = p.get("drag", 1.0)
+            px = int(p["x"] + p["vx"] * elapsed * drag)
+            py = int(p["y"] + p["vy"] * elapsed * drag + 0.5 * self.gravity * elapsed ** 2)
 
-            # Fade out over time — fully transparent at end of duration
             alpha = max(0, int(255 * (1 - elapsed / self.duration)))
             if alpha <= 0:
                 continue
-
-            # Skip particles that flew off-screen
             if px < -50 or px > frame.width + 50 or py > frame.height + 50:
                 continue
 
             size = p["size"]
-            color = p["color"] + (alpha,)  # RGBA with fade
+            color = p["color"] + (alpha,)
 
-            # Draw the particle shape
-            if p["shape"] == "rect":
-                # Rotated rectangle (approximated as diamond at high rotation)
+            # Rotation angle changes over time
+            rot = math.radians(p["rotation"] + p["rot_speed"] * elapsed)
+
+            if p["shape"] == "ribbon":
+                # Ribbon confetti — elongated rectangle that tumbles
+                # Width narrows/widens based on rotation to simulate 3D tumble
+                aspect = p.get("aspect", 3.0)
+                ribbon_w = size
+                ribbon_h = int(size * aspect)
+                # 3D tumble: width oscillates as ribbon rotates
+                tumble = abs(math.cos(rot))
+                apparent_w = max(2, int(ribbon_w * (0.2 + 0.8 * tumble)))
+                hw, hh = apparent_w // 2, ribbon_h // 2
+                # Rotated corners
+                cos_r = math.cos(rot * 0.3)
+                sin_r = math.sin(rot * 0.3)
+                corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+                rotated = [(int(px + x * cos_r - y * sin_r),
+                            int(py + x * sin_r + y * cos_r))
+                           for x, y in corners]
+                draw.polygon(rotated, fill=color)
+            elif p["shape"] == "rect":
                 half = size // 2
                 draw.rectangle([px - half, py - half, px + half, py + half],
                                fill=color)
@@ -110,7 +131,6 @@ class ConfettiBurst:
                               px + size // 2, py + size // 2],
                              fill=color)
             else:
-                # Star shape — draw as overlapping triangles
                 self._draw_star(draw, px, py, size, color)
 
         # Composite confetti onto frame

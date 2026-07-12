@@ -22,6 +22,7 @@ class QuizRound:
     fun_fact: str          # Surprising fact under 15 words
     difficulty: str        # "easy", "medium", or "hard"
     image_prompt: str      # Gemini Imagen prompt for cartoon illustration
+    pexels_search: str = "" # Search term for Pexels photo API (speed quiz format)
 
 
 @dataclass
@@ -97,6 +98,8 @@ def parse_quiz_response(raw_json: str, category: str) -> QuizPack:
             # Use custom prompt or fall back to template
             image_prompt=r.get("image_prompt",
                                config.IMAGE_PROMPT_TEMPLATE.format(answer=r["answer"])),
+            # Pexels search term for speed quiz real photos
+            pexels_search=r.get("pexels_search", r["answer"]),
         ))
 
     return QuizPack(category=category, rounds=rounds)
@@ -157,6 +160,100 @@ Return ONLY valid JSON in this exact format:
 
     # Update and save history so these answers won't repeat
     history = update_history(history, pack)
+    save_history(history)
+
+    return pack
+
+
+def generate_speed_quiz_pack(category: str,
+                              num_rounds: int = None) -> QuizPack:
+    """
+    # Generate a speed quiz pack with 120 rounds across 4 difficulty tiers.
+    # Each tier has 30 rounds: Easy → Medium → Hard → Impossible.
+    # Includes pexels_search field for real photo fetching.
+    # Generates in 4 batches of 30 to stay within Gemini output limits.
+    """
+    from google import genai
+
+    if num_rounds is None:
+        num_rounds = config.SPEED_ROUNDS
+
+    # Load history for never-repeat system
+    history = load_history()
+    used_answers = history.get(category, [])
+    cat_info = config.CATEGORIES[category]
+
+    # Build the full quiz in 4 batches (one per difficulty tier)
+    all_rounds = []
+    rounds_per_tier = num_rounds // len(config.SPEED_DIFFICULTIES)
+
+    for difficulty in config.SPEED_DIFFICULTIES:
+        # Describe what this difficulty tier means
+        difficulty_desc = {
+            "EASY": "very common, everyday items that most 5-year-olds would recognize instantly",
+            "MEDIUM": "recognizable but less common items that most 8-year-olds would know",
+            "HARD": "uncommon items that would challenge a 12-year-old",
+            "IMPOSSIBLE": "rare, exotic, or obscure items that would stump most adults",
+        }
+
+        # Collect all answers generated so far (within this video + history)
+        current_answers = used_answers + [r.answer for r in all_rounds]
+
+        prompt = f"""You are a kids quiz content generator creating a SPEED QUIZ video.
+Generate exactly {rounds_per_tier} quiz questions about {cat_info['prompt_hint']}.
+
+DIFFICULTY: {difficulty} — {difficulty_desc[difficulty]}
+
+RULES:
+- Each answer must be a specific, recognizable {cat_info['display'].lower()}
+- Fun facts must be kid-appropriate, surprising, and under 15 words
+- hint_question should be a playful clue (not the answer itself)
+- pexels_search must be a good search term for finding a real photo on Pexels
+  (e.g., for "Bengal Tiger" use "bengal tiger close up", for "Kangaroo" use "kangaroo")
+- NEVER use any of these previously used answers: {json.dumps(current_answers[-300:])}
+
+Return ONLY valid JSON:
+{{
+  "rounds": [
+    {{
+      "answer": "Lion",
+      "hint_question": "This animal is called the king of the jungle!",
+      "fun_fact": "Lions can sleep up to 20 hours a day!",
+      "difficulty": "{difficulty.lower()}",
+      "pexels_search": "lion close up portrait"
+    }}
+  ]
+}}"""
+
+        client = genai.Client(api_key=config.GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+
+        # Parse this tier's rounds
+        tier_pack = parse_quiz_response(response.text, category)
+        for r in tier_pack.rounds:
+            r.difficulty = difficulty.lower()
+        all_rounds.extend(tier_pack.rounds)
+
+        print(f"[QUIZ] Generated {len(tier_pack.rounds)} {difficulty} rounds")
+
+    # Build final pack with all rounds in difficulty order
+    pack = QuizPack(category=category, rounds=all_rounds)
+
+    # Update history with all new answers
+    history = update_history(history, pack)
+    # Track video generation metadata for never-repeat videos
+    if "video_log" not in history:
+        history["video_log"] = []
+    history["video_log"].append({
+        "date": datetime.now().isoformat(),
+        "category": category,
+        "format": "speed",
+        "num_rounds": len(all_rounds),
+        "answers": [r.answer for r in all_rounds],
+    })
     save_history(history)
 
     return pack

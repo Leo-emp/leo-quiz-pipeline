@@ -1,0 +1,17 @@
+Leo Quiz — Background Music Credits
+=============================================
+
+All tracks are royalty-free under the Pixabay License.
+Free for commercial use, no attribution required.
+https://pixabay.com/service/license-summary/
+
+  animals: "Happy Day" by Pixabay (not downloaded)
+  dinosaurs: "Epic Adventure" by Pixabay (downloaded)
+  space: "Ambient Dream" by Pixabay (not downloaded)
+  vehicles: "Energetic Rock" by Pixabay (not downloaded)
+  fruits: "Tropical Vibes" by Pixabay (not downloaded)
+  flags: "World Beat" by Pixabay (not downloaded)
+
+To replace any track, drop your own MP3/WAV into assets/music/
+using the category name (e.g., animals.mp3). The pipeline
+always prefers real files over generated fallbacks.

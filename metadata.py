@@ -66,6 +66,84 @@ Made for Kids content — keep everything family-friendly."""
     return metadata
 
 
+def generate_speed_metadata(quiz_pack: QuizPack,
+                             platform: str = "youtube") -> dict:
+    """
+    # Generate metadata for speed quiz using the PROVEN title formula.
+    # Title pattern: "Guess 120 [Category] in 3 Seconds | Easy to Impossible"
+    # This exact formula drives millions of views on Quiz Blitz.
+    # No Gemini needed — deterministic titles are MORE reliable for SEO.
+    """
+    category = quiz_pack.category
+    cat_display = config.CATEGORIES[category]["display"]
+    num_rounds = len(quiz_pack.rounds)
+    answers = [r.answer for r in quiz_pack.rounds]
+
+    if platform == "youtube":
+        title = f"Guess {num_rounds} {cat_display}s in 3 Seconds | Easy to Impossible"
+        description = (
+            f"Can you guess all {num_rounds} {cat_display.lower()}s in just 3 seconds each? "
+            f"From EASY to IMPOSSIBLE - test your knowledge! 🧠\n\n"
+            f"⏱️ You have only 3 SECONDS to guess each {cat_display.lower()}!\n"
+            f"📊 Difficulty levels: Easy → Medium → Hard → Impossible\n\n"
+            f"🕐 TIMESTAMPS:\n"
+            f"0:00 Intro\n"
+            f"0:10 EASY Level (1-30)\n"
+            f"4:10 MEDIUM Level (31-60)\n"
+            f"8:10 HARD Level (61-90)\n"
+            f"12:10 IMPOSSIBLE Level (91-120)\n\n"
+            f"💬 Comment how many YOU got right!\n"
+            f"👍 Like & Subscribe for daily quizzes!\n\n"
+            f"#quiz #guessthe{cat_display.lower()} #trivia #kids #challenge"
+        )
+        tags = [
+            f"guess the {cat_display.lower()}", "quiz", "trivia",
+            f"{cat_display.lower()} quiz", "guess in 3 seconds",
+            "easy to impossible", "kids quiz", "family quiz",
+            f"{cat_display.lower()} challenge", "brain teaser",
+            "quiz game", "fun quiz", "guess the animal",
+            "leo quiz", "speed quiz",
+        ]
+        hashtags = [
+            f"#GuessThe{cat_display}", "#Quiz", "#Trivia",
+            "#SpeedQuiz", "#KidsQuiz",
+        ]
+    elif platform == "tiktok":
+        title = f"Guess {num_rounds} {cat_display}s in 3 Seconds! 🧠⏱️ #quiz #trivia"
+        description = f"Can you guess them all? Easy to Impossible! Comment your score! 💬"
+        tags = [f"{cat_display.lower()}quiz", "quiz", "trivia", "speedquiz", "challenge"]
+        hashtags = ["#quiz", "#trivia", "#challenge", f"#{cat_display.lower()}quiz", "#fyp"]
+    elif platform == "instagram":
+        title = f"Guess {num_rounds} {cat_display}s in 3 Seconds! ⏱️"
+        description = (
+            f"Can YOU guess all {num_rounds}? 🤔 From Easy to IMPOSSIBLE!\n"
+            f"Comment your score below! 💬\n\n"
+            f"#quiz #trivia #{cat_display.lower()}quiz #challenge #speedquiz "
+            f"#kidsquiz #familyfun #braingames #guessing #funfacts"
+        )
+        tags = ["quiz", "trivia", "challenge", "reels", "kids"]
+        hashtags = [f"#{cat_display.lower()}quiz", "#quiz", "#trivia", "#reels", "#challenge"]
+    else:
+        title = f"How Many {cat_display}s Can You Guess in 3 Seconds? 🧠"
+        description = (
+            f"Challenge your family! {num_rounds} {cat_display.lower()}s from Easy to Impossible. "
+            f"Share and comment your score!"
+        )
+        tags = ["quiz", "family", "challenge", "fun"]
+        hashtags = ["#quiz", "#family", "#challenge"]
+
+    return {
+        "title": title,
+        "description": description,
+        "tags": tags,
+        "hashtags": hashtags,
+        "category": category,
+        "made_for_kids": True,
+        "answers": answers,
+        "format": "speed",
+    }
+
+
 def save_metadata(metadata: dict, output_path: Path) -> Path:
     """# Save metadata dict to JSON file for upload reference."""
     output_path.parent.mkdir(parents=True, exist_ok=True)

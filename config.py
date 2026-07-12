@@ -28,6 +28,7 @@ HISTORY_FILE = PROJECT_ROOT / "history.json"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 
 # --- ElevenLabs voice tuning ---
 # These settings make the voice sound energetic and natural for kids content.
@@ -234,3 +235,87 @@ TEXT_STROKE_WIDTH = 3         # Outline stroke for readability
 TEXT_SHADOW_OFFSET = 3        # Drop shadow pixel offset (bumped from 2)
 TEXT_SHADOW_OPACITY = 0.6     # Drop shadow transparency (bumped from 0.5)
 TEXT_MAX_WIDTH_RATIO = 0.85   # Max text width as ratio of frame width
+
+# ============================================================
+# SPEED QUIZ FORMAT — Quiz Blitz style (top creator format)
+# 120 rounds, 3-second timer, real photos, 16:9 landscape
+# Based on research: Quiz Blitz (913K subs, 229M views)
+# ============================================================
+
+# --- Speed quiz structure ---
+SPEED_ROUNDS = 120                     # 120 rounds total (proven format for millions of views)
+SPEED_TIMER_SECONDS = 3                # 3-second guess window (creates urgency)
+SPEED_ROUND_DURATION = 8.0             # 8s per round: 3s timer + 2s reveal + 2s fact + 1s transition
+SPEED_INTRO_DURATION = 6.0             # Title card + subscribe prompt
+SPEED_SUBSCRIBE_DURATION = 4.0         # "Subscribe before we start!" screen
+SPEED_SECTION_CARD_DURATION = 3.0      # "EASY LEVEL" / "MEDIUM LEVEL" etc.
+SPEED_OUTRO_DURATION = 7.0             # Score + subscribe CTA + Leo celebration
+
+# --- Speed round sub-timings (offsets within each 8s round) ---
+SPEED_PHOTO_START = 0.0                # Photo slides in immediately
+SPEED_TIMER_START = 0.4                # Timer begins after photo settles
+SPEED_REVEAL_START = 3.4               # Answer reveals after 3-second timer
+SPEED_FACT_START = 5.0                 # Fun fact appears briefly
+SPEED_TRANSITION_START = 7.5           # Quick crossfade to next round
+
+# --- Difficulty tiers (30 rounds each = 120 total) ---
+# Progression hooks viewers: easy start builds confidence, impossible creates challenge
+SPEED_DIFFICULTIES = ["EASY", "MEDIUM", "HARD", "IMPOSSIBLE"]
+SPEED_ROUNDS_PER_DIFFICULTY = 30       # 120 / 4 = 30 rounds per tier
+
+# --- Speed quiz background colors ---
+# Bright, saturated, kid-friendly — rotates every round for visual variety
+# Directly observed from Quiz Blitz videos: amber, turquoise, blue, etc.
+SPEED_BG_COLORS = [
+    (41, 171, 226),    # sky blue (like Quiz Blitz intro)
+    (255, 183, 27),    # golden amber (Quiz Blitz round 1)
+    (0, 206, 186),     # turquoise mint (Quiz Blitz round 2)
+    (255, 107, 107),   # coral red
+    (142, 68, 173),    # purple
+    (46, 204, 113),    # emerald green
+    (255, 71, 87),     # hot pink
+    (255, 165, 2),     # orange
+    (52, 152, 219),    # ocean blue
+    (241, 196, 15),    # bright yellow
+    (231, 76, 60),     # warm red
+    (26, 188, 156),    # teal
+    (155, 89, 182),    # medium purple
+    (243, 156, 18),    # amber
+    (22, 160, 133),    # deep teal
+]
+
+# --- Speed quiz pattern types (per difficulty section) ---
+# Subtle semi-transparent patterns behind content (observed in Quiz Blitz)
+SPEED_PATTERNS = {
+    "EASY": "clouds",        # soft, friendly (amber bg in Quiz Blitz)
+    "MEDIUM": "stars",       # fun, energetic (turquoise bg in Quiz Blitz)
+    "HARD": "question_marks", # mysterious, challenging
+    "IMPOSSIBLE": "lightning", # intense, dramatic (like Quiz Blitz branding)
+}
+
+# --- Speed quiz difficulty sidebar colors ---
+SPEED_DIFFICULTY_COLORS = {
+    "EASY": (46, 204, 113),        # green badge (matches Quiz Blitz)
+    "MEDIUM": (241, 196, 15),      # yellow
+    "HARD": (231, 76, 60),         # red
+    "IMPOSSIBLE": (142, 68, 173),  # purple
+}
+
+# --- Speed quiz round badge ---
+SPEED_BADGE_COLOR = (233, 30, 99)  # pink/magenta circle (like Quiz Blitz)
+SPEED_BADGE_RADIUS = 38            # badge circle radius in pixels
+
+# --- Speed quiz typography ---
+SPEED_TITLE_FONT_SIZE = 72         # "Guess The Animal" header
+SPEED_ANSWER_FONT_SIZE = 68        # answer reveal text
+SPEED_ROUND_NUM_FONT_SIZE = 42     # number inside badge
+SPEED_DIFFICULTY_FONT_SIZE = 24    # sidebar difficulty labels
+SPEED_TIMER_HEIGHT = 35            # timer bar height in pixels
+SPEED_SECTION_FONT_SIZE = 110      # "EASY LEVEL" section card text
+SPEED_BRANDING_FONT_SIZE = 22      # "LEO QUIZ" small branding
+
+# --- Speed quiz photo card ---
+SPEED_PHOTO_WIDTH = 700            # photo display width (fits naturally in 1920)
+SPEED_PHOTO_HEIGHT = 480           # photo display height
+SPEED_CARD_PADDING = 14            # white border around photo
+SPEED_CARD_RADIUS = 18             # rounded corner radius
