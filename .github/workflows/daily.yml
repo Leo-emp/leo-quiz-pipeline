@@ -19,9 +19,11 @@ on:
         default: '6'
         type: string
       format:
-        description: 'Video format (short, long, mega)'
+        # Speed is now the primary format — Quiz Blitz style (120 rounds, 3s timer)
+        # generates the highest-performing video type based on research
+        description: 'Video format (short, long, mega, speed)'
         required: false
-        default: 'short'
+        default: 'speed'
         type: string
 
 jobs:
