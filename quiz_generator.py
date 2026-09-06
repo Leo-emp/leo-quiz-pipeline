@@ -151,7 +151,7 @@ Return ONLY valid JSON in this exact format:
     # Call Gemini 2.5 Flash for fast, cheap content generation
     client = genai.Client(api_key=config.GEMINI_API_KEY)
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.6-flash",
         contents=prompt,
     )
 
@@ -227,7 +227,7 @@ Return ONLY valid JSON:
 
         client = genai.Client(api_key=config.GEMINI_API_KEY)
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=prompt,
         )
 

@@ -53,7 +53,7 @@ def _generate_with_gemini_flash(prompt: str, output_path: Path) -> Path:
     client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash-preview-05-20",
+        model="gemini-3.6-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_modalities=["image", "text"],
