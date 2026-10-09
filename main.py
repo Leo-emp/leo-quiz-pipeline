@@ -385,58 +385,74 @@ def run_pipeline(category: str = None, num_rounds: int = None,
 
     audio_path = output_dir / "audio_mixed.wav"
 
-    if video_format == "speed":
-        # Speed format: dedicated audio mixer with fresh voiceover narration pack
-        build_speed_audio(round_audios, music_path, total_duration, audio_path,
-                          num_rounds=num_rounds, narration_pack=narration_pack)
+    # --- Cache check: skip audio mixing if mixed file already exists ---
+    if audio_path.exists() and audio_path.stat().st_size > 10000:
+        print("[LEO QUIZ] Step 5: CACHED audio_mixed.wav — skipping mix")
     else:
-        build_short_audio(round_audios, music_path, total_duration, audio_path)
+        if video_format == "speed":
+            build_speed_audio(round_audios, music_path, total_duration, audio_path,
+                              num_rounds=num_rounds, narration_pack=narration_pack)
+        else:
+            build_short_audio(round_audios, music_path, total_duration, audio_path)
 
     # --- Step 6: Assemble video (frame-by-frame rendering) ---
-    print("[LEO QUIZ] Step 6: Assembling video...")
     video_path = output_dir / "video.mp4"
 
-    if video_format == "speed":
-        # Speed quiz assembler: Quiz Blitz style with real photos
-        # Pass narration_pack so Leo's speech bubbles show what he's saying
-        assemble_speed_quiz(quiz_pack, image_paths, round_audios,
-                             audio_path, video_path,
-                             narration_pack=narration_pack)
-    elif video_format in ("long", "mega"):
-        # 16:9 landscape assembler for long-form / mega quiz
-        assemble_longform(quiz_pack, image_paths, silhouette_paths,
-                           round_audios, audio_path, video_path,
-                           format_type=video_format)
+    # --- Cache check: skip 20+ minute render if video already exists ---
+    if video_path.exists() and video_path.stat().st_size > 100000:
+        print(f"[LEO QUIZ] Step 6: CACHED video.mp4 "
+              f"({video_path.stat().st_size / 1024 / 1024:.1f} MB) — skipping render")
     else:
-        # 9:16 vertical assembler for shorts
-        assemble_short(quiz_pack, image_paths, silhouette_paths,
-                        round_audios, audio_path, video_path)
+        print("[LEO QUIZ] Step 6: Assembling video...")
+        if video_format == "speed":
+            assemble_speed_quiz(quiz_pack, image_paths, round_audios,
+                                 audio_path, video_path,
+                                 narration_pack=narration_pack)
+        elif video_format in ("long", "mega"):
+            assemble_longform(quiz_pack, image_paths, silhouette_paths,
+                               round_audios, audio_path, video_path,
+                               format_type=video_format)
+        else:
+            assemble_short(quiz_pack, image_paths, silhouette_paths,
+                            round_audios, audio_path, video_path)
 
     # --- Step 7: Generate thumbnail ---
-    print("[LEO QUIZ] Step 7: Generating thumbnail...")
-    if video_format == "speed":
-        # Speed format: 5 viral thumbnail variants, Gemini auto-selects best
-        thumb_path = generate_speed_thumbnail(quiz_pack, image_paths, output_dir)
-        print(f"[LEO QUIZ]   Generated 5 variants: A(Grid) B(Challenge) C(Number) D(Mystery) E(Difficulty)")
+    thumb_path = output_dir / "thumbnail.png"
+
+    # --- Cache check: skip thumbnail if it already exists ---
+    if thumb_path.exists() and thumb_path.stat().st_size > 5000:
+        print(f"[LEO QUIZ] Step 7: CACHED thumbnail.png — skipping generation")
     else:
-        # Original A/B thumbnail system with Gemini auto-selection
-        thumb_paths = generate_all_thumbnails(quiz_pack, image_paths, silhouette_paths, output_dir)
-        print(f"[LEO QUIZ]   Generated 3 variants: A (split), B (mystery), C (grid)")
-        best_variant = select_best_thumbnail(thumb_paths)
-        print(f"[LEO QUIZ]   Gemini selected variant: {best_variant.upper()}")
-        import shutil
-        thumb_path = output_dir / "thumbnail.png"
-        shutil.copy2(thumb_paths[best_variant], thumb_path)
+        print("[LEO QUIZ] Step 7: Generating thumbnail...")
+        if video_format == "speed":
+            thumb_path = generate_speed_thumbnail(quiz_pack, image_paths, output_dir)
+            print(f"[LEO QUIZ]   Generated 5 variants: A(Grid) B(Challenge) C(Number) D(Mystery) E(Difficulty)")
+        else:
+            thumb_paths = generate_all_thumbnails(quiz_pack, image_paths, silhouette_paths, output_dir)
+            print(f"[LEO QUIZ]   Generated 3 variants: A (split), B (mystery), C (grid)")
+            best_variant = select_best_thumbnail(thumb_paths)
+            print(f"[LEO QUIZ]   Gemini selected variant: {best_variant.upper()}")
+            import shutil
+            thumb_path = output_dir / "thumbnail.png"
+            shutil.copy2(thumb_paths[best_variant], thumb_path)
 
     # --- Step 8: Generate platform metadata ---
-    print("[LEO QUIZ] Step 8: Generating metadata...")
-    for platform in ("youtube", "tiktok", "instagram", "facebook"):
-        if video_format == "speed":
-            # Speed format: deterministic SEO formula (no Gemini needed)
-            meta = generate_speed_metadata(quiz_pack, platform)
-        else:
-            meta = generate_metadata(quiz_pack, platform)
-        save_metadata(meta, output_dir / f"metadata_{platform}.json")
+    # --- Cache check: skip if all 4 platform metadata files exist ---
+    platforms = ("youtube", "tiktok", "instagram", "facebook")
+    meta_paths = [output_dir / f"metadata_{p}.json" for p in platforms]
+    if all(p.exists() for p in meta_paths):
+        print("[LEO QUIZ] Step 8: CACHED metadata — skipping generation")
+    else:
+        print("[LEO QUIZ] Step 8: Generating metadata...")
+        for platform in platforms:
+            meta_file = output_dir / f"metadata_{platform}.json"
+            if meta_file.exists():
+                continue
+            if video_format == "speed":
+                meta = generate_speed_metadata(quiz_pack, platform)
+            else:
+                meta = generate_metadata(quiz_pack, platform)
+            save_metadata(meta, meta_file)
 
     print(f"[LEO QUIZ] Pipeline complete! Video: {video_path}")
     print(f"[LEO QUIZ] Format: {video_format}, Duration: ~{total_duration:.0f}s")
