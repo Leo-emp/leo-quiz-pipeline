@@ -56,6 +56,20 @@ class LongformContext:
     confetti_bursts: list[ConfettiBurst] = field(default_factory=list)
     round_audios: list[RoundAudio] = field(default_factory=list)
     timeline: list[dict] = field(default_factory=list)
+    _image_cache: dict = field(default_factory=dict, repr=False)
+
+
+def _get_cached_image_lf(ctx, round_idx: int, size: int):
+    """# Load + resize a quiz image once, cache for subsequent frames."""
+    cache_key = (round_idx, size)
+    if cache_key not in ctx._image_cache:
+        if round_idx < len(ctx.image_paths):
+            img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
+            img = img.resize((size, size), Image.LANCZOS)
+            ctx._image_cache[cache_key] = img
+        else:
+            return None
+    return ctx._image_cache[cache_key]
 
 
 def _get_timing(format_type: str) -> dict:
@@ -545,10 +559,9 @@ def render_longform_frame(t: float, ctx: LongformContext) -> np.ndarray:
     if phase == "reveal":
         reveal_elapsed = elapsed_in_round - (timing["reveal_start"] - timing["silhouette_start"])
 
-        # Full color image pops in with elastic bounce
-        if round_idx < len(ctx.image_paths):
-            img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
-            img = img.resize((content_size, content_size), Image.LANCZOS)
+        # Full color image pops in with elastic bounce (cached load)
+        img = _get_cached_image_lf(ctx, round_idx, content_size)
+        if img is not None:
             img_scale = compute_scale(
                 reveal_elapsed, 0.0, config.EASE_REVEAL, "elastic_out"
             )
@@ -582,10 +595,9 @@ def render_longform_frame(t: float, ctx: LongformContext) -> np.ndarray:
     # FUN FACT PHASE — keep image + answer, add fact below
     # ---------------------------------------------------------------
     if phase == "fun_fact":
-        # Keep reveal image visible
-        if round_idx < len(ctx.image_paths):
-            img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
-            img = img.resize((content_size, content_size), Image.LANCZOS)
+        # Keep reveal image visible (cached load)
+        img = _get_cached_image_lf(ctx, round_idx, content_size)
+        if img is not None:
             frame = _composite_image_on_frame(
                 frame, img, content_center_x, content_center_y
             )

@@ -46,6 +46,8 @@ class VideoContext:
     confetti_bursts: list[ConfettiBurst] = field(default_factory=list)
     round_audios: list[RoundAudio] = field(default_factory=list)
     timeline: list[dict] = field(default_factory=list)
+    # --- Image cache: avoids loading + resizing same image every frame ---
+    _image_cache: dict = field(default_factory=dict, repr=False)
 
 
 def build_round_timeline(round_index: int, round_start: float) -> list[dict]:
@@ -110,6 +112,22 @@ def _get_current_event(t: float, timeline: list[dict]) -> dict:
         if event["start"] <= t < event["end"]:
             return event
     return timeline[-1] if timeline else {"phase": "intro", "start": 0, "end": 0, "round": -1}
+
+
+def _get_cached_image(ctx: VideoContext, round_idx: int, size: int) -> Image.Image:
+    """
+    # Load + resize a quiz image once, cache for subsequent frames.
+    # Same image is needed ~150 times (reveal + fun_fact at 30 FPS).
+    """
+    cache_key = (round_idx, size)
+    if cache_key not in ctx._image_cache:
+        if round_idx < len(ctx.image_paths):
+            img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
+            img = img.resize((size, size), Image.LANCZOS)
+            ctx._image_cache[cache_key] = img
+        else:
+            return None
+    return ctx._image_cache[cache_key]
 
 
 def _composite_image_on_frame(frame_img: Image.Image, overlay: Image.Image,
@@ -394,10 +412,9 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
     if phase == "reveal":
         reveal_elapsed = elapsed_in_round - config.REVEAL_START
 
-        # Full color image pops in with ElasticEaseOut
-        if round_idx < len(ctx.image_paths):
-            img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
-            img = img.resize((content_size, content_size), Image.LANCZOS)
+        # Full color image pops in with ElasticEaseOut (cached load)
+        img = _get_cached_image(ctx, round_idx, content_size)
+        if img is not None:
             img_scale = compute_scale(
                 reveal_elapsed, 0.0, config.EASE_REVEAL, "elastic_out"
             )
@@ -431,10 +448,9 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
     # FUN FACT PHASE — keep image + answer, add fact
     # ---------------------------------------------------------------
     if phase == "fun_fact":
-        # Keep reveal image visible (no animation — static)
-        if round_idx < len(ctx.image_paths):
-            img = Image.open(ctx.image_paths[round_idx]).convert("RGBA")
-            img = img.resize((content_size, content_size), Image.LANCZOS)
+        # Keep reveal image visible (cached load, no animation — static)
+        img = _get_cached_image(ctx, round_idx, content_size)
+        if img is not None:
             frame = _composite_image_on_frame(
                 frame, img, content_center_x, content_center_y
             )

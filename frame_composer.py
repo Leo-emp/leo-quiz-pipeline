@@ -8,6 +8,7 @@
 # enhanced backgrounds with radial gradients.
 # ============================================================
 import math
+from functools import lru_cache
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import numpy as np
@@ -31,66 +32,71 @@ def _shift_hue(rgb: tuple, shift_degrees: float) -> tuple[int, int, int]:
     return (int(r2 * 255), int(g2 * 255), int(b2 * 255))
 
 
+@lru_cache(maxsize=32)
 def _get_font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont:
     """
     # Load a font, trying Baloo2-Bold first, then Fredoka, then fallback.
-    # Falls back gracefully if custom fonts aren't installed yet.
+    # LRU-cached so the same size is only loaded from disk once.
     """
     font_names = ["Baloo2-Bold.ttf", "FredokaOne-Regular.ttf"]
     for name in font_names:
         font_path = config.FONTS_DIR / name
         if font_path.exists():
             return ImageFont.truetype(str(font_path), size)
-    # Fallback to system arial or default font
     try:
         return ImageFont.truetype("arial.ttf", size)
     except OSError:
         return ImageFont.load_default()
 
 
+# --- Cache for static radial highlight overlay (same for all frames) ---
+_highlight_cache = {}
+
+
 def render_gradient_background(width: int, height: int,
                                 category: str, t: float = 0.0) -> Image.Image:
     """
     # Render a rich vertical gradient background with animated hue shift.
-    # UPGRADED: adds a subtle radial highlight in the center for depth,
-    # making the background feel more 3D and professional.
+    # OPTIMIZED: numpy vectorized gradient (no Python for-loop),
+    # cached radial highlight overlay.
     """
     colors = config.CATEGORY_COLORS[category]
     color1 = hex_to_rgb(colors["primary"])
     color2 = hex_to_rgb(colors["secondary"])
 
-    # Animated hue shift — creates "living" feel (±8 degrees, was 5)
+    # Animated hue shift — creates "living" feel (±8 degrees)
     hue_shift = 8.0 * math.sin(t * 0.4)
     color1 = _shift_hue(color1, hue_shift)
     color2 = _shift_hue(color2, -hue_shift)
 
-    # Create gradient image — interpolate colors row by row
-    arr = np.zeros((height, width, 3), dtype=np.uint8)
-    for y in range(height):
-        ratio = y / height
-        # Non-linear gradient — darker at top/bottom, brighter in middle
-        # Creates a subtle "stage lighting" effect
-        brightness = 1.0 + 0.15 * math.sin(ratio * math.pi)
-        r = int(min(255, color1[0] * (1 - ratio) + color2[0] * ratio) * brightness)
-        g = int(min(255, color1[1] * (1 - ratio) + color2[1] * ratio) * brightness)
-        b = int(min(255, color1[2] * (1 - ratio) + color2[2] * ratio) * brightness)
-        arr[y, :] = [min(255, r), min(255, g), min(255, b)]
-
+    # --- Vectorized gradient: no Python for-loop ---
+    ratios = np.linspace(0, 1, height, dtype=np.float32).reshape(-1, 1)
+    brightness = 1.0 + 0.15 * np.sin(ratios * math.pi)
+    c1 = np.array(color1, dtype=np.float32)
+    c2 = np.array(color2, dtype=np.float32)
+    gradient = c1 * (1 - ratios) + c2 * ratios
+    gradient *= brightness
+    gradient = np.clip(gradient, 0, 255).astype(np.uint8)
+    # --- Broadcast to full width ---
+    arr = np.broadcast_to(gradient[:, np.newaxis, :], (height, width, 3)).copy()
     bg = Image.fromarray(arr)
 
-    # Add subtle radial highlight in upper-center for 3D depth
-    highlight = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    h_draw = ImageDraw.Draw(highlight)
-    cx, cy = width // 2, int(height * 0.35)
-    radius = int(width * 0.5)
-    # Draw soft white glow at center
-    for r in range(radius, 0, -3):
-        progress = r / radius
-        alpha = int(20 * (1 - progress * progress))  # Soft falloff
-        h_draw.ellipse([cx - r, cy - r, cx + r, cy + r],
-                       fill=(255, 255, 255, alpha))
+    # --- Cached radial highlight (computed once per resolution) ---
+    cache_key = (width, height)
+    if cache_key not in _highlight_cache:
+        highlight = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        h_draw = ImageDraw.Draw(highlight)
+        cx, cy = width // 2, int(height * 0.35)
+        radius = int(width * 0.5)
+        for r in range(radius, 0, -3):
+            progress = r / radius
+            alpha = int(20 * (1 - progress * progress))
+            h_draw.ellipse([cx - r, cy - r, cx + r, cy + r],
+                           fill=(255, 255, 255, alpha))
+        _highlight_cache[cache_key] = highlight
+
     bg = bg.convert("RGBA")
-    bg = Image.alpha_composite(bg, highlight)
+    bg = Image.alpha_composite(bg, _highlight_cache[cache_key])
 
     return bg
 
