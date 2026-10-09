@@ -149,13 +149,28 @@ def _generate_with_gemini_flash(prompt: str, output_path: Path) -> Path:
 
     client = genai.Client(api_key=config.GEMINI_API_KEY)
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_modalities=["image", "text"],
-        ),
-    )
+    # Retry on 503 overload (Gemini Flash gets hammered)
+    import time as _time
+    response = None
+    for _attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["image", "text"],
+                ),
+            )
+            break
+        except Exception as _e:
+            if "503" in str(_e) or "UNAVAILABLE" in str(_e):
+                wait = 10 * (_attempt + 1)
+                print(f"[IMAGE] Gemini 503 — retrying in {wait}s (attempt {_attempt + 2}/3)")
+                _time.sleep(wait)
+            else:
+                raise
+    if response is None:
+        raise RuntimeError("Gemini Flash unavailable after 3 retries")
 
     # --- Extract image from response parts ---
     for part in response.candidates[0].content.parts:

@@ -7,11 +7,34 @@
 # ============================================================
 import json
 import re
+import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import config
+
+
+def _gemini_with_retry(client, prompt, max_retries=3):
+    """
+    # Calls Gemini Flash with automatic retry on 503 overload.
+    # Waits 10s, 20s, 30s between attempts.
+    # Returns the response object or raises after all retries exhausted.
+    """
+    for attempt in range(max_retries):
+        try:
+            return client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+            )
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                wait = 10 * (attempt + 1)
+                print(f"[QUIZ] Gemini 503 — retrying in {wait}s (attempt {attempt + 2}/{max_retries})")
+                _time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("Gemini API unavailable after retries")
 
 
 @dataclass
@@ -148,12 +171,9 @@ Return ONLY valid JSON in this exact format:
   ]
 }}"""
 
-    # Call Gemini 2.5 Flash for fast, cheap content generation
+    # Call Gemini Flash with retry on 503 overload
     client = genai.Client(api_key=config.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt,
-    )
+    response = _gemini_with_retry(client, prompt)
 
     # Parse the JSON response into structured QuizPack
     pack = parse_quiz_response(response.text, category)
@@ -226,10 +246,7 @@ Return ONLY valid JSON:
 }}"""
 
         client = genai.Client(api_key=config.GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt,
-        )
+        response = _gemini_with_retry(client, prompt)
 
         # Parse this tier's rounds
         tier_pack = parse_quiz_response(response.text, category)
