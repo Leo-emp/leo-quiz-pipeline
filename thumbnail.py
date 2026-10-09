@@ -435,7 +435,7 @@ def select_best_thumbnail(thumb_paths: dict[str, Path]) -> str:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[prompt] + images,
         )
         choice = response.text.strip().upper()

@@ -46,11 +46,10 @@ For Instagram: caption should be engaging ('Can YOU guess all 6? 🤔 Comment yo
 For Facebook: title should be shareable and parent-targeted ('How Many Animals Can Your Kids Guess? 🦁'), description encourages sharing, minimal hashtags.
 Made for Kids content — keep everything family-friendly."""
 
+    # Use retry + fallback (3.6 → 2.5) to handle quota/overload
+    from quiz_generator import _gemini_with_retry
     client = genai.Client(api_key=config.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt,
-    )
+    response = _gemini_with_retry(client, prompt)
 
     # Parse JSON response (handle code fences)
     text = response.text.strip()

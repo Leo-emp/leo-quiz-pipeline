@@ -728,7 +728,7 @@ def select_best_speed_thumbnail(thumb_paths: dict[str, Path]) -> str:
 
     try:
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-2.5-flash",
             contents=[prompt] + images,
         )
         answer = response.text.strip().upper()

@@ -94,11 +94,9 @@ Return ONLY valid JSON:
 Make Leo sound NATURAL — like a real character talking, not a script being read.
 Vary sentence structure. Use contractions. Give Leo a warm, playful personality."""
 
+    from quiz_generator import _gemini_with_retry
     client = genai.Client(api_key=config.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt,
-    )
+    response = _gemini_with_retry(client, prompt)
 
     # Parse JSON response
     text = response.text.strip()
