@@ -85,23 +85,58 @@ def generate_narration(text: str, output_path: Path) -> tuple[Path, list[dict]]:
     )
 
     # Collect audio bytes and word timestamps from streaming response
+    # ElevenLabs SDK v2.45+ returns tuples: (key_string, value)
+    # Keys: "audio_base_64" (note underscore), "alignment",
+    #        "normalized_alignment", "quality_check"
+    import base64
     audio_bytes = b""
     word_timestamps = []
 
     for chunk in response:
-        # Collect audio data
-        if hasattr(chunk, "audio_base64") and chunk.audio_base64:
-            import base64
+        # --- SDK v2.45+: chunks are (key, value) tuples ---
+        if isinstance(chunk, tuple) and len(chunk) == 2:
+            key, value = chunk
+
+            # Audio data — key is "audio_base_64" (underscore between base and 64)
+            if key == "audio_base_64" and value:
+                audio_bytes += base64.b64decode(value)
+
+            # Word timestamps — reconstruct from character-level alignment
+            # "normalized_alignment" has characters, start times, end times
+            elif key == "normalized_alignment" and value:
+                chars = getattr(value, "characters", [])
+                starts = getattr(value, "character_start_times_seconds", [])
+                ends = getattr(value, "character_end_times_seconds", [])
+                # Rebuild words by splitting on space characters
+                if chars and starts and ends:
+                    current_word = ""
+                    word_start = None
+                    for i, char in enumerate(chars):
+                        if char == " " or i == len(chars) - 1:
+                            # End of word — include last char if not space
+                            if i == len(chars) - 1 and char != " ":
+                                current_word += char
+                            if current_word.strip():
+                                word_end = ends[i] if i == len(chars) - 1 else ends[i - 1]
+                                word_timestamps.append({
+                                    "word": current_word.strip(),
+                                    "start": word_start if word_start is not None else 0.0,
+                                    "end": word_end,
+                                })
+                            current_word = ""
+                            word_start = None
+                        else:
+                            if not current_word:
+                                word_start = starts[i]
+                            current_word += char
+
+        # --- Legacy fallback: old SDK returned objects with attributes ---
+        elif hasattr(chunk, "audio_base64") and chunk.audio_base64:
             audio_bytes += base64.b64decode(chunk.audio_base64)
-        # Collect word-level timing data
-        if hasattr(chunk, "alignment") and chunk.alignment:
-            if hasattr(chunk.alignment, "words") and chunk.alignment.words:
-                for w in chunk.alignment.words:
-                    word_timestamps.append({
-                        "word": w.word,
-                        "start": w.start,
-                        "end": w.end,
-                    })
+
+    # Validate — never write 0-byte files (causes downstream pydub crash)
+    if not audio_bytes:
+        raise RuntimeError(f"ElevenLabs returned 0 bytes of audio for: {text[:60]}...")
 
     # Save audio file to disk
     output_path.parent.mkdir(parents=True, exist_ok=True)
