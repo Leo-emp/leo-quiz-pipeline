@@ -1516,8 +1516,6 @@ def render_speed_frame(t: float, ctx: SpeedQuizContext) -> np.ndarray:
 def assemble_speed_quiz(quiz_pack, photo_paths, round_audios,
                         audio_path, output_path, mascot_dir=None,
                         narration_pack=None):
-    from moviepy import VideoClip, AudioFileClip
-
     w, h = config.LONGFORM_SIZE
     num_rounds = len(quiz_pack.rounds)
 
@@ -1586,19 +1584,22 @@ def assemble_speed_quiz(quiz_pack, photo_paths, round_audios,
     print(f"[SPEED] Effects: sparkles, glow, shake, Ken Burns, confetti,")
     print(f"[SPEED]   countdown, wipe transitions, checkmarks, score, progress")
 
-    video = VideoClip(lambda t: render_speed_frame(t, ctx), duration=total_duration)
-    video = video.with_fps(config.FPS)
-
-    if audio_path and audio_path.exists():
-        audio = AudioFileClip(str(audio_path))
-        video = video.with_audio(audio)
+    # --- Pipe PIL frames directly to ffmpeg (replaces MoviePy) ---
+    from ffmpeg_pipe import pipe_frames_to_video
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    video.write_videofile(
-        str(output_path), codec="libx264",
-        bitrate=config.LONGFORM_BITRATE, preset="medium",
-        audio_codec="aac", audio_bitrate=config.AUDIO_BITRATE,
-        threads=4, logger="bar")
+    result = pipe_frames_to_video(
+        render_fn=lambda t: render_speed_frame(t, ctx),
+        duration=total_duration,
+        fps=config.FPS,
+        width=w,
+        height=h,
+        audio_path=str(audio_path) if audio_path and audio_path.exists() else None,
+        output_path=str(output_path),
+        bitrate=config.LONGFORM_BITRATE,
+        preset="fast",
+        audio_bitrate=config.AUDIO_BITRATE,
+    )
 
     print(f"[SPEED] Video saved: {output_path}")
-    return output_path
+    return output_path if result else None

@@ -706,8 +706,6 @@ def assemble_longform(quiz_pack: QuizPack, image_paths: list[Path],
     """# Assemble a complete long-form quiz video (16:9 landscape).
     # Mirrors assemble_short() but for 1920×1080 layout.
     # format_type: "long" for daily 10-min, "mega" for weekly 15-min."""
-    from moviepy import VideoClip, AudioFileClip
-
     w, h = config.LONGFORM_SIZE
     num_rounds = len(quiz_pack.rounds)
     timing = _get_timing(format_type)
@@ -768,24 +766,21 @@ def assemble_longform(quiz_pack: QuizPack, image_paths: list[Path],
         timeline=timeline,
     )
 
-    # Create video clip with frame-by-frame rendering
-    video = VideoClip(lambda t: render_longform_frame(t, ctx), duration=total_duration)
-    video = video.with_fps(config.FPS)
+    # --- Pipe PIL frames directly to ffmpeg (replaces MoviePy) ---
+    from ffmpeg_pipe import pipe_frames_to_video
 
-    # Attach mixed audio track
-    if audio_path and audio_path.exists():
-        audio = AudioFileClip(str(audio_path))
-        video = video.with_audio(audio)
-
-    # Export — higher bitrate for landscape
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    video.write_videofile(
-        str(output_path),
-        codec="libx264",
+    result = pipe_frames_to_video(
+        render_fn=lambda t: render_longform_frame(t, ctx),
+        duration=total_duration,
+        fps=config.FPS,
+        width=w,
+        height=h,
+        audio_path=str(audio_path) if audio_path and audio_path.exists() else None,
+        output_path=str(output_path),
         bitrate=config.LONGFORM_BITRATE,
-        preset="slow",
-        audio_codec="aac",
+        preset="fast",
         audio_bitrate=config.AUDIO_BITRATE,
     )
 
-    return output_path
+    return output_path if result else None

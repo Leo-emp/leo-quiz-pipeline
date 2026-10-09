@@ -587,8 +587,6 @@ def assemble_short(quiz_pack: QuizPack, image_paths: list[Path],
     # UPGRADED: now creates confetti bursts, themed decorations,
     # and uses all premium visual effects automatically.
     """
-    from moviepy import VideoClip, AudioFileClip
-
     w, h = config.SHORTS_SIZE
     num_rounds = len(quiz_pack.rounds)
     total_duration = config.INTRO_DURATION + num_rounds * config.ROUND_DURATION + config.OUTRO_DURATION
@@ -645,24 +643,21 @@ def assemble_short(quiz_pack: QuizPack, image_paths: list[Path],
         timeline=timeline,
     )
 
-    # Create video clip with frame-by-frame rendering function
-    video = VideoClip(lambda t: render_frame(t, ctx), duration=total_duration)
-    video = video.with_fps(config.FPS)
+    # --- Pipe PIL frames directly to ffmpeg (replaces MoviePy) ---
+    from ffmpeg_pipe import pipe_frames_to_video
 
-    # Attach mixed audio track
-    if audio_path and audio_path.exists():
-        audio = AudioFileClip(str(audio_path))
-        video = video.with_audio(audio)
-
-    # Export final video — H.264 with AAC audio
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    video.write_videofile(
-        str(output_path),
-        codec="libx264",
+    result = pipe_frames_to_video(
+        render_fn=lambda t: render_frame(t, ctx),
+        duration=total_duration,
+        fps=config.FPS,
+        width=w,
+        height=h,
+        audio_path=str(audio_path) if audio_path and audio_path.exists() else None,
+        output_path=str(output_path),
         bitrate=config.VIDEO_BITRATE,
-        preset="slow",       # Slower = better compression quality
-        audio_codec="aac",
+        preset="fast",
         audio_bitrate=config.AUDIO_BITRATE,
     )
 
-    return output_path
+    return output_path if result else None
