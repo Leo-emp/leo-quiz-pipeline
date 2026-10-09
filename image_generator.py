@@ -149,28 +149,32 @@ def _generate_with_gemini_flash(prompt: str, output_path: Path) -> Path:
 
     client = genai.Client(api_key=config.GEMINI_API_KEY)
 
-    # Retry on 503 overload (Gemini Flash gets hammered)
+    # Retry on 503 overload — tries 3.6 first, falls back to 2.5
     import time as _time
     response = None
-    for _attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["image", "text"],
-                ),
-            )
+    for _model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
+        for _attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["image", "text"],
+                    ),
+                )
+                break
+            except Exception as _e:
+                if "503" in str(_e) or "UNAVAILABLE" in str(_e):
+                    wait = 10 * (_attempt + 1)
+                    print(f"[IMAGE] {_model} 503 — retrying in {wait}s (attempt {_attempt + 2}/3)")
+                    _time.sleep(wait)
+                else:
+                    raise
+        if response is not None:
             break
-        except Exception as _e:
-            if "503" in str(_e) or "UNAVAILABLE" in str(_e):
-                wait = 10 * (_attempt + 1)
-                print(f"[IMAGE] Gemini 503 — retrying in {wait}s (attempt {_attempt + 2}/3)")
-                _time.sleep(wait)
-            else:
-                raise
+        print(f"[IMAGE] {_model} exhausted — trying fallback model")
     if response is None:
-        raise RuntimeError("Gemini Flash unavailable after 3 retries")
+        raise RuntimeError("All Gemini models unavailable after retries")
 
     # --- Extract image from response parts ---
     for part in response.candidates[0].content.parts:

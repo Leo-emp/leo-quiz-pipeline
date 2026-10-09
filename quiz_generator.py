@@ -18,23 +18,26 @@ import config
 def _gemini_with_retry(client, prompt, max_retries=3):
     """
     # Calls Gemini Flash with automatic retry on 503 overload.
-    # Waits 10s, 20s, 30s between attempts.
-    # Returns the response object or raises after all retries exhausted.
+    # Tries gemini-3.6-flash first, falls back to gemini-2.5-flash if all retries fail.
+    # Waits 10s, 20s, 30s between attempts per model.
     """
-    for attempt in range(max_retries):
-        try:
-            return client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-            )
-        except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                wait = 10 * (attempt + 1)
-                print(f"[QUIZ] Gemini 503 — retrying in {wait}s (attempt {attempt + 2}/{max_retries})")
-                _time.sleep(wait)
-            else:
-                raise
-    raise RuntimeError("Gemini API unavailable after retries")
+    # Try primary model first, then fallback
+    for model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
+        for attempt in range(max_retries):
+            try:
+                return client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                )
+            except Exception as e:
+                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    wait = 10 * (attempt + 1)
+                    print(f"[QUIZ] {model} 503 — retrying in {wait}s (attempt {attempt + 2}/{max_retries})")
+                    _time.sleep(wait)
+                else:
+                    raise
+        print(f"[QUIZ] {model} exhausted — trying fallback model")
+    raise RuntimeError("All Gemini models unavailable after retries")
 
 
 @dataclass
