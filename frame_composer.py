@@ -200,6 +200,116 @@ def render_text_wrapped(image: Image.Image, text: str,
     return result
 
 
+def render_word_highlight_caption(
+    image: Image.Image,
+    word_timestamps: list[dict],
+    current_time: float,
+    position: tuple[int, int],
+    font_size: int = 42,
+    normal_color: tuple = (255, 255, 255),
+    highlight_color: tuple = (255, 230, 50),
+    words_visible: int = 3,
+    max_width: int = None,
+) -> Image.Image:
+    """
+    # Word-by-word highlight caption renderer.
+    # Shows 1-3 words at a time with the current word in yellow.
+    # Other visible words in white. Used for fun facts in Leo Quiz.
+    #
+    # Args:
+    #   word_timestamps: list of {"word", "start", "end"} from ElevenLabs
+    #   current_time:    playback time relative to this audio clip
+    #   position:        (x, y) center of caption area
+    #   words_visible:   how many words to show at once (1-3)
+    #   highlight_color:  color for the currently spoken word
+    """
+    if not word_timestamps:
+        return image
+
+    if max_width is None:
+        max_width = int(image.width * 0.85)
+
+    result = image.copy()
+    if result.mode != "RGBA":
+        result = result.convert("RGBA")
+
+    font = _get_font(font_size)
+
+    # --- Find which word is currently being spoken ---
+    active_idx = -1
+    for i, wt in enumerate(word_timestamps):
+        if wt["start"] <= current_time <= wt["end"]:
+            active_idx = i
+            break
+        # --- If we're between words, show the last spoken one ---
+        if i > 0 and word_timestamps[i - 1]["end"] <= current_time < wt["start"]:
+            active_idx = i - 1
+            break
+
+    # --- If past all timestamps, show the last word ---
+    if active_idx < 0 and word_timestamps and current_time >= word_timestamps[-1]["start"]:
+        active_idx = len(word_timestamps) - 1
+
+    # --- Nothing to show yet (before first word starts) ---
+    if active_idx < 0:
+        return image
+
+    # --- Determine the window of words to display ---
+    # Center the window around the active word
+    half = words_visible // 2
+    win_start = max(0, active_idx - half)
+    win_end = min(len(word_timestamps), win_start + words_visible)
+    # --- Adjust start if window pushed to the end ---
+    win_start = max(0, win_end - words_visible)
+
+    visible_words = word_timestamps[win_start:win_end]
+
+    # --- Measure the full line width to center it ---
+    full_text = " ".join(w["word"] for w in visible_words)
+    text_bbox = font.getbbox(full_text)
+    total_w = text_bbox[2] - text_bbox[0]
+
+    # --- If text is wider than max_width, show fewer words ---
+    if total_w > max_width and len(visible_words) > 1:
+        visible_words = [word_timestamps[active_idx]]
+        full_text = visible_words[0]["word"]
+        text_bbox = font.getbbox(full_text)
+        total_w = text_bbox[2] - text_bbox[0]
+
+    # --- Draw each word individually with correct color ---
+    x_cursor = position[0] - total_w // 2
+    y_pos = position[1]
+
+    for wt in visible_words:
+        word = wt["word"]
+        is_active = (wt is word_timestamps[active_idx])
+        color = highlight_color if is_active else normal_color
+
+        # --- Shadow for readability ---
+        shadow_layer = Image.new("RGBA", result.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow_layer)
+        shadow_draw.text(
+            (x_cursor + 3, y_pos + 3), word, font=font,
+            fill=(0, 0, 0, 150), anchor="lm"
+        )
+        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(2))
+        result = Image.alpha_composite(result, shadow_layer)
+
+        # --- Main word text ---
+        draw = ImageDraw.Draw(result)
+        draw.text(
+            (x_cursor, y_pos), word, font=font,
+            fill=color, anchor="lm",
+            stroke_width=2, stroke_fill=(0, 0, 0)
+        )
+
+        # --- Advance cursor (measure this word + space) ---
+        word_bbox = font.getbbox(word + " ")
+        x_cursor += word_bbox[2] - word_bbox[0]
+
+    return result
+
+
 def render_pill_background(frame: Image.Image, text: str,
                            position: tuple[int, int],
                            font_size: int,

@@ -26,7 +26,8 @@ from animations import (
 )
 from frame_composer import (
     render_gradient_background, render_text, render_text_wrapped,
-    render_pill_background, hex_to_rgb, _get_font
+    render_pill_background, hex_to_rgb, _get_font,
+    render_word_highlight_caption,
 )
 from effects import (
     ConfettiBurst, ScreenShake, KenBurnsZoom, GlowRing,
@@ -596,20 +597,35 @@ def render_longform_frame(t: float, ctx: LongformContext) -> np.ndarray:
                             color=primary_rgb,
                             stroke_color=(255, 255, 255))
 
-        # Fun fact fades in with pill background
+        # Fun fact — word-by-word highlight caption (yellow active word)
         fact_elapsed = elapsed_in_round - (timing["fun_fact_start"] - timing["silhouette_start"])
         fact_opacity = compute_opacity(fact_elapsed, 0.0, 0.3, "quad_out")
         if fact_opacity > 0.01:
-            fact_y = int(h * 0.80)
-            frame = render_pill_background(
-                frame, round_data.fun_fact,
-                (w // 2, fact_y), config.FACT_FONT_SIZE,
-                bg_opacity=int(170 * fact_opacity)
-            )
-            frame = render_text_wrapped(frame, round_data.fun_fact,
-                                         position=(w // 2, fact_y),
-                                         font_size=config.FACT_FONT_SIZE,
-                                         stroke_width=0, shadow=False)
+            fact_y = int(h * 0.50)
+            # --- Use word timestamps if available for synced highlight ---
+            fact_ts = []
+            if round_idx < len(ctx.round_audios) and ctx.round_audios[round_idx]:
+                fact_ts = ctx.round_audios[round_idx].fact_timestamps or []
+            if fact_ts:
+                frame = render_word_highlight_caption(
+                    frame, fact_ts,
+                    current_time=fact_elapsed,
+                    position=(w // 2, fact_y),
+                    font_size=config.FACT_FONT_SIZE,
+                    highlight_color=(255, 230, 50),
+                    words_visible=3,
+                )
+            else:
+                # --- Fallback: static wrapped text ---
+                frame = render_pill_background(
+                    frame, round_data.fun_fact,
+                    (w // 2, fact_y), config.FACT_FONT_SIZE,
+                    bg_opacity=int(170 * fact_opacity)
+                )
+                frame = render_text_wrapped(frame, round_data.fun_fact,
+                                             position=(w // 2, fact_y),
+                                             font_size=config.FACT_FONT_SIZE,
+                                             stroke_width=0, shadow=False)
 
         # Confetti continues during fun fact
         for burst in ctx.confetti_bursts:

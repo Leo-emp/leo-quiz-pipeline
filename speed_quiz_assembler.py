@@ -44,7 +44,7 @@ from effects import (
     ConfettiBurst, ScreenShake, KenBurnsZoom, GlowRing,
     ThemedDecorations, apply_vignette, render_glow_text,
 )
-from frame_composer import _get_font, hex_to_rgb
+from frame_composer import _get_font, hex_to_rgb, render_word_highlight_caption
 from quiz_generator import QuizRound, QuizPack
 from narration import RoundAudio
 
@@ -1458,11 +1458,25 @@ def render_speed_frame(t: float, ctx: SpeedQuizContext) -> np.ndarray:
                                   duration=0.2, intensity=8.0,
                                   seed=round_idx * 7)
 
-        # Fun fact
+        # Fun fact — word-by-word highlight if timestamps available
         if phase == "fact":
             fact_start = round_start + config.SPEED_FACT_START
             fact_elapsed = t - fact_start
-            frame = _render_fun_fact(frame, round_data.fun_fact, fact_elapsed)
+            # --- Try word-highlight caption first ---
+            fact_ts = []
+            if round_idx < len(ctx.round_audios) and ctx.round_audios[round_idx]:
+                fact_ts = ctx.round_audios[round_idx].fact_timestamps or []
+            if fact_ts:
+                frame = render_word_highlight_caption(
+                    frame, fact_ts,
+                    current_time=fact_elapsed,
+                    position=(int(w * 0.42), int(h * 0.50)),
+                    font_size=28,
+                    highlight_color=(255, 230, 50),
+                    words_visible=3,
+                )
+            else:
+                frame = _render_fun_fact(frame, round_data.fun_fact, fact_elapsed)
 
         # Confetti
         for burst in ctx.confetti_bursts:
