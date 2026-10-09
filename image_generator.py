@@ -150,6 +150,7 @@ def _generate_with_gemini_flash(prompt: str, output_path: Path) -> Path:
     client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     # Retry on 503 overload — tries 3.6 first, falls back to 2.5
+    # Also handles 429 quota exhaustion by skipping to fallback
     import time as _time
     response = None
     for _model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
@@ -164,7 +165,13 @@ def _generate_with_gemini_flash(prompt: str, output_path: Path) -> Path:
                 )
                 break
             except Exception as _e:
-                if "503" in str(_e) or "UNAVAILABLE" in str(_e):
+                _err = str(_e)
+                # 429 = quota exhausted — skip to next model
+                if "429" in _err or "RESOURCE_EXHAUSTED" in _err:
+                    print(f"[IMAGE] {_model} quota exhausted — skipping to fallback")
+                    break
+                # 503 = temporary overload — retry
+                if "503" in _err or "UNAVAILABLE" in _err:
                     wait = 10 * (_attempt + 1)
                     print(f"[IMAGE] {_model} 503 — retrying in {wait}s (attempt {_attempt + 2}/3)")
                     _time.sleep(wait)

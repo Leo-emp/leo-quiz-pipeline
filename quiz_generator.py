@@ -30,13 +30,20 @@ def _gemini_with_retry(client, prompt, max_retries=3):
                     contents=prompt,
                 )
             except Exception as e:
-                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                err = str(e)
+                # 429 = quota exhausted — skip to next model immediately
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    print(f"[QUIZ] {model} quota exhausted — skipping to fallback")
+                    break
+                # 503 = temporary overload — retry with backoff
+                if "503" in err or "UNAVAILABLE" in err:
                     wait = 10 * (attempt + 1)
                     print(f"[QUIZ] {model} 503 — retrying in {wait}s (attempt {attempt + 2}/{max_retries})")
                     _time.sleep(wait)
                 else:
                     raise
-        print(f"[QUIZ] {model} exhausted — trying fallback model")
+        else:
+            print(f"[QUIZ] {model} exhausted — trying fallback model")
     raise RuntimeError("All Gemini models unavailable after retries")
 
 
