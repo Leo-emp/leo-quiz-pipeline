@@ -299,3 +299,73 @@ def generate_speed_narration(category: str, output_dir: Path,
 
     print(f"[NARRATION] Generated {clip_count} voice clips for this video")
     return pack
+
+
+def load_cached_narration_pack(output_dir: Path, num_rounds: int) -> SpeedNarrationPack:
+    """
+    # Rebuilds a SpeedNarrationPack from cached files on disk.
+    # Called when main.py detects narration files already exist
+    # from a previous pipeline run (saves ~140 ElevenLabs API calls).
+    #
+    # Expects files in output_dir/narration/:
+    #   intro.mp3, subscribe.mp3, outro.mp3
+    #   section_easy.mp3, section_medium.mp3, etc.
+    #   reaction_0.mp3 .. reaction_N.mp3
+    #   answer_0.mp3 .. answer_N.mp3
+    #   script.json (the Gemini-generated script)
+    """
+    narration_dir = output_dir / "narration"
+    pack = SpeedNarrationPack()
+
+    # --- Load cached script (needed for subtitles/debugging) ---
+    script_path = narration_dir / "script.json"
+    if script_path.exists():
+        try:
+            with open(script_path, "r", encoding="utf-8") as f:
+                pack.script = json.load(f)
+        except Exception:
+            pack.script = {}
+
+    # --- Structure clips ---
+    intro = narration_dir / "intro.mp3"
+    pack.intro_path = intro if intro.exists() else None
+
+    subscribe = narration_dir / "subscribe.mp3"
+    pack.subscribe_path = subscribe if subscribe.exists() else None
+
+    outro = narration_dir / "outro.mp3"
+    pack.outro_path = outro if outro.exists() else None
+
+    # --- Section transitions ---
+    for diff in ["easy", "medium", "hard", "impossible"]:
+        section_file = narration_dir / f"section_{diff}.mp3"
+        if section_file.exists():
+            pack.section_paths[diff.upper()] = section_file
+
+    # --- Reaction clips ---
+    i = 0
+    while True:
+        reaction_file = narration_dir / f"reaction_{i}.mp3"
+        if reaction_file.exists():
+            pack.reaction_paths.append(reaction_file)
+            i += 1
+        else:
+            break
+
+    # --- Per-round answer reveals (stored in narration/reveals/) ---
+    reveals_dir = narration_dir / "reveals"
+    for i in range(num_rounds):
+        reveal_file = reveals_dir / f"reveal_{i:03d}.mp3"
+        if reveal_file.exists():
+            pack.round_reveal_paths.append(reveal_file)
+        else:
+            # --- Gap in reveals — append None to keep index alignment ---
+            pack.round_reveal_paths.append(None)
+
+    clip_count = sum(1 for x in [
+        pack.intro_path, pack.subscribe_path, pack.outro_path
+    ] if x) + len(pack.section_paths) + len(pack.reaction_paths) + \
+        sum(1 for x in pack.round_reveal_paths if x)
+
+    print(f"[NARRATION] Loaded {clip_count} cached voice clips")
+    return pack

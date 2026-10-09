@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
-from quiz_generator import generate_quiz_pack, generate_speed_quiz_pack, QuizPack
+from quiz_generator import generate_quiz_pack, generate_speed_quiz_pack, QuizPack, QuizRound
 from image_generator import generate_quiz_image
 from silhouette import extract_silhouette, validate_silhouette
 from narration import generate_round_narration, RoundAudio
@@ -96,13 +96,49 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     print("[LEO QUIZ] Step 0d: Checking sound effects...")
     ensure_all_sfx()
 
-    # --- Step 1: Generate quiz content via Gemini ---
+    # ================================================================
+    # Step 1: Generate quiz content via Gemini (with cache)
+    # ================================================================
+    # If a previous run saved quiz_pack.json in this output dir,
+    # reuse it instead of burning another Gemini API call.
+    # This happens when: same day + same category = same output_dir.
+    # ================================================================
     print("[LEO QUIZ] Step 1: Generating quiz content...")
-    if video_format == "speed":
-        # Speed format: 120 rounds in 4 batches, one per difficulty tier
-        quiz_pack = generate_speed_quiz_pack(category, num_rounds)
-    else:
-        quiz_pack = generate_quiz_pack(category, num_rounds)
+
+    quiz_pack_path = output_dir / "quiz_pack.json"
+    quiz_pack = None
+
+    # --- Check for cached quiz pack from a previous run ---
+    if quiz_pack_path.exists():
+        try:
+            with open(quiz_pack_path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            cached_rounds = cached.get("rounds", [])
+            if cached_rounds and len(cached_rounds) >= num_rounds - 1:
+                # --- Rebuild QuizPack from cached JSON ---
+                quiz_pack = QuizPack(category=cached.get("category", category))
+                for rd in cached_rounds:
+                    quiz_pack.rounds.append(QuizRound(
+                        answer=rd["answer"],
+                        hint_question=rd["hint_question"],
+                        fun_fact=rd["fun_fact"],
+                        difficulty=rd["difficulty"],
+                        image_prompt=rd.get("image_prompt", ""),
+                        pexels_search=rd.get("pexels_search", ""),
+                    ))
+                print(f"[LEO QUIZ]   CACHED -- reusing {len(quiz_pack.rounds)} rounds "
+                      f"from previous run (saves Gemini API call)")
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"[LEO QUIZ]   Cache corrupted ({e}), regenerating...")
+            quiz_pack = None
+
+    if quiz_pack is None:
+        # --- Generate fresh quiz content via Gemini ---
+        if video_format == "speed":
+            quiz_pack = generate_speed_quiz_pack(category, num_rounds)
+        else:
+            quiz_pack = generate_quiz_pack(category, num_rounds)
+
     print(f"[LEO QUIZ]   Generated {len(quiz_pack.rounds)} rounds")
 
     # Sort rounds by difficulty for long-form/mega/speed
@@ -113,7 +149,7 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     for i, r in enumerate(quiz_pack.rounds):
         print(f"[LEO QUIZ]   Round {i+1}: {r.answer} ({r.difficulty})")
 
-    # Save quiz pack for weekly compiler to collect later
+    # Save quiz pack for weekly compiler to collect later (also serves as cache)
     pack_data = {
         "category": quiz_pack.category,
         "rounds": [
@@ -123,39 +159,85 @@ def run_pipeline(category: str = None, num_rounds: int = None,
                 "fun_fact": r.fun_fact,
                 "difficulty": r.difficulty,
                 "image_prompt": r.image_prompt,
+                "pexels_search": getattr(r, "pexels_search", ""),
             }
             for r in quiz_pack.rounds
         ]
     }
-    with open(output_dir / "quiz_pack.json", "w", encoding="utf-8") as f:
+    with open(quiz_pack_path, "w", encoding="utf-8") as f:
         json.dump(pack_data, f, indent=2, ensure_ascii=False)
 
-    # --- Step 2: Generate images ---
+    # ================================================================
+    # Step 2: Generate images (with cache)
+    # ================================================================
+    # Images are the second most expensive step (Gemini Imagen for
+    # non-speed, Pexels API for speed). If images already exist in
+    # rounds_dir from a previous run, skip regeneration entirely.
+    # ================================================================
     rounds_dir = output_dir / "rounds"
     rounds_dir.mkdir(exist_ok=True)
 
     if video_format == "speed":
         # Speed format: fetch real photos from Pexels API
         print("[LEO QUIZ] Step 2: Fetching real photos from Pexels...")
-        image_paths = fetch_photos_batch(quiz_pack.rounds, rounds_dir)
+
+        # --- Check for cached speed photos ---
+        cached_photos = [
+            rounds_dir / f"round_{i+1}_photo.png"
+            for i in range(len(quiz_pack.rounds))
+        ]
+        # --- Also check .jpg extension (Pexels might save as either) ---
+        all_exist = all(p.exists() and p.stat().st_size > 5000 for p in cached_photos)
+        if not all_exist:
+            cached_photos = [
+                rounds_dir / f"round_{i+1}_photo.jpg"
+                for i in range(len(quiz_pack.rounds))
+            ]
+            all_exist = all(p.exists() and p.stat().st_size > 5000 for p in cached_photos)
+
+        if all_exist:
+            image_paths = cached_photos
+            print(f"[LEO QUIZ]   CACHED -- reusing {len(image_paths)} photos")
+        else:
+            image_paths = fetch_photos_batch(quiz_pack.rounds, rounds_dir)
+            print(f"[LEO QUIZ]   Fetched {len(image_paths)} photos")
+
         # No silhouettes needed for speed format (real photos shown directly)
         silhouette_paths = []
-        print(f"[LEO QUIZ]   Fetched {len(image_paths)} photos")
     else:
         # Original format: generate cartoon images via Gemini
         print("[LEO QUIZ] Step 2: Generating quiz images...")
         image_paths = []
+        cached_count = 0
         for i, r in enumerate(quiz_pack.rounds):
             img_path = rounds_dir / f"round_{i+1}_image.png"
+            # --- Skip if image already exists from previous run ---
+            if img_path.exists() and img_path.stat().st_size > 5000:
+                cached_count += 1
+                image_paths.append(img_path)
+                continue
             print(f"[LEO QUIZ]   Generating image for: {r.answer}")
             generate_quiz_image(r, img_path)
             image_paths.append(img_path)
 
-        # --- Step 3: Extract silhouettes from images ---
+        if cached_count > 0:
+            print(f"[LEO QUIZ]   CACHED {cached_count}/{len(quiz_pack.rounds)} images "
+                  f"(saves {cached_count} Gemini Imagen calls)")
+
+        # ================================================================
+        # Step 3: Extract silhouettes (with cache)
+        # ================================================================
+        # Silhouette extraction is local PIL work (free), but still
+        # skip if files exist from a previous run for speed.
+        # ================================================================
         print("[LEO QUIZ] Step 3: Extracting silhouettes...")
         silhouette_paths = []
         for i, img_path in enumerate(image_paths):
             sil_path = rounds_dir / f"round_{i+1}_silhouette.png"
+            # --- Skip if silhouette already exists ---
+            if sil_path.exists() and sil_path.stat().st_size > 1000:
+                silhouette_paths.append(sil_path)
+                continue
             extract_silhouette(img_path, sil_path)
 
             if not validate_silhouette(sil_path):
@@ -163,7 +245,14 @@ def run_pipeline(category: str = None, num_rounds: int = None,
 
             silhouette_paths.append(sil_path)
 
-    # --- Step 4: Generate voice narration via ElevenLabs ---
+    # ================================================================
+    # Step 4: Generate voice narration via ElevenLabs (with cache)
+    # ================================================================
+    # Narration is the MOST expensive step — each round makes 3
+    # ElevenLabs API calls (question, reveal, fun fact).
+    # For 6 rounds = 18 calls, for 60 rounds = 180 calls.
+    # If audio files already exist from a previous run, reuse them.
+    # ================================================================
     print("[LEO QUIZ] Step 4: Generating narration...")
     round_audios = []
 
@@ -175,11 +264,35 @@ def run_pipeline(category: str = None, num_rounds: int = None,
         # Structure clips: intro, subscribe, 4 sections, ~12 reactions, outro
         # + 120 per-round answer reveals ("It's a Lion!", "Eagle! Wow!", etc.)
         # Gemini generates varied phrase templates, each round gets a random one
-        print("[LEO QUIZ]   Generating fresh voiceover pack...")
-        answer_list = [r.answer for r in quiz_pack.rounds]
-        narration_pack = generate_speed_narration(
-            category, output_dir, num_rounds, answers=answer_list
+        #
+        # --- Check for cached speed narration pack ---
+        # Speed narration stores files in output_dir/narration/ — if the
+        # intro.mp3 + outro.mp3 + answer reveals exist, skip regeneration
+        speed_narr_dir = output_dir / "narration"
+        speed_reveals_dir = speed_narr_dir / "reveals"
+        speed_cached = (
+            speed_narr_dir.exists()
+            and (speed_narr_dir / "intro.mp3").exists()
+            and (speed_narr_dir / "outro.mp3").exists()
         )
+        if speed_cached:
+            # --- Count cached answer reveals to verify completeness ---
+            reveal_count = len(list(speed_reveals_dir.glob("reveal_*.mp3"))) if speed_reveals_dir.exists() else 0
+            speed_cached = reveal_count >= num_rounds - 5  # allow small margin
+
+        if speed_cached:
+            print(f"[LEO QUIZ]   CACHED -- reusing speed narration pack "
+                  f"({reveal_count} answer reveals found)")
+            # --- Rebuild narration pack from cached files ---
+            from speed_narration import load_cached_narration_pack
+            narration_pack = load_cached_narration_pack(output_dir, num_rounds)
+        else:
+            print("[LEO QUIZ]   Generating fresh voiceover pack...")
+            answer_list = [r.answer for r in quiz_pack.rounds]
+            narration_pack = generate_speed_narration(
+                category, output_dir, num_rounds, answers=answer_list
+            )
+
         for i, r in enumerate(quiz_pack.rounds):
             r._round_index = i
             round_audios.append(RoundAudio(
@@ -187,12 +300,59 @@ def run_pipeline(category: str = None, num_rounds: int = None,
                 fact_path=Path(""),
             ))
     else:
+        narr_cached_count = 0
         for i, r in enumerate(quiz_pack.rounds):
             audio_dir = rounds_dir / f"round_{i+1}_audio"
-            print(f"[LEO QUIZ]   Narrating: {r.answer}")
             r._round_index = i
-            ra = generate_round_narration(r, category, audio_dir)
-            round_audios.append(ra)
+
+            # --- Check if all 3 narration files exist from previous run ---
+            q_file = audio_dir / "question.mp3"
+            r_file = audio_dir / "reveal.mp3"
+            f_file = audio_dir / "fact.mp3"
+
+            if (q_file.exists() and q_file.stat().st_size > 1000
+                    and r_file.exists() and r_file.stat().st_size > 1000
+                    and f_file.exists() and f_file.stat().st_size > 1000):
+                # --- Reuse cached narration (saves 3 ElevenLabs calls) ---
+                narr_cached_count += 1
+
+                # --- Load cached timestamps if available ---
+                ts_file = audio_dir / "fact_timestamps.json"
+                fact_timestamps = []
+                if ts_file.exists():
+                    try:
+                        with open(ts_file, "r", encoding="utf-8") as f:
+                            fact_timestamps = json.load(f)
+                    except Exception:
+                        fact_timestamps = []
+
+                # --- Check for cached reaction ---
+                from narration import _ensure_reaction
+                reaction_path = _ensure_reaction(i)
+
+                round_audios.append(RoundAudio(
+                    question_path=q_file,
+                    reveal_path=r_file,
+                    fact_path=f_file,
+                    fact_timestamps=fact_timestamps,
+                    reaction_path=reaction_path,
+                ))
+            else:
+                # --- Generate fresh narration for this round ---
+                print(f"[LEO QUIZ]   Narrating: {r.answer}")
+                ra = generate_round_narration(r, category, audio_dir)
+
+                # --- Cache the timestamps for future retries ---
+                if ra.fact_timestamps:
+                    ts_file = audio_dir / "fact_timestamps.json"
+                    with open(ts_file, "w", encoding="utf-8") as f:
+                        json.dump(ra.fact_timestamps, f)
+
+                round_audios.append(ra)
+
+        if narr_cached_count > 0:
+            print(f"[LEO QUIZ]   CACHED {narr_cached_count}/{len(quiz_pack.rounds)} "
+                  f"narration rounds (saves {narr_cached_count * 3} ElevenLabs calls)")
 
     # --- Step 5: Mix audio (voice + SFX + music) ---
     print("[LEO QUIZ] Step 5: Mixing audio...")
