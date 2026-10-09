@@ -120,13 +120,25 @@ def pipe_frames_to_video(
 
     print(f"[FFMPEG PIPE] Rendering {total_frames} frames ({duration:.1f}s @ {fps}fps)")
     print(f"[FFMPEG PIPE] Resolution: {width}x{height}, preset: {preset}")
+    sys.stdout.flush()
+
+    # --- Redirect ffmpeg stderr to a temp file to prevent deadlock ---
+    # CRITICAL: using stderr=PIPE causes deadlock on Windows because Python
+    # writes frames to stdin while ffmpeg writes progress to stderr. Once the
+    # stderr pipe buffer fills (~4KB), ffmpeg blocks → Python blocks → deadlock.
+    # Solution: write stderr to a temp file, read it after ffmpeg finishes.
+    import tempfile
+    stderr_file = tempfile.NamedTemporaryFile(
+        mode="w+b", suffix="_ffmpeg.log", delete=False
+    )
+    stderr_path = stderr_file.name
 
     # --- Open ffmpeg subprocess with piped stdin ---
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=stderr_file,
     )
 
     start_time = time.time()
@@ -163,22 +175,33 @@ def pipe_frames_to_video(
                     f"[FFMPEG PIPE] {pct:.0f}% ({frame_idx + 1}/{total_frames}) "
                     f"— {fps_actual:.1f} fps — ETA {eta:.0f}s"
                 )
+                sys.stdout.flush()
                 last_progress = now
 
     except BrokenPipeError:
         # --- ffmpeg exited early (error in encoding) ---
-        _, stderr = proc.communicate()
-        print(f"[FFMPEG PIPE] Pipe broken: {stderr.decode()[-300:]}")
+        proc.wait()
+        stderr_file.close()
+        with open(stderr_path, "rb") as f:
+            stderr_text = f.read().decode(errors="replace")
+        os.unlink(stderr_path)
+        print(f"[FFMPEG PIPE] Pipe broken: {stderr_text[-300:]}")
         return None
 
     # --- Close stdin and wait for ffmpeg to finish ---
     proc.stdin.close()
-    _, stderr = proc.communicate(timeout=120)
+    proc.wait(timeout=120)
+    stderr_file.close()
+
+    # --- Read stderr log for error reporting ---
+    with open(stderr_path, "rb") as f:
+        stderr_text = f.read().decode(errors="replace")
+    os.unlink(stderr_path)
 
     elapsed = time.time() - start_time
 
     if proc.returncode != 0:
-        print(f"[FFMPEG PIPE] Encoding failed: {stderr.decode()[-300:]}")
+        print(f"[FFMPEG PIPE] Encoding failed: {stderr_text[-300:]}")
         return None
 
     # --- Verify output ---
