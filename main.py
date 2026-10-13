@@ -10,6 +10,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from PIL import Image
+
 import config
 from quiz_generator import generate_quiz_pack, generate_speed_quiz_pack, QuizPack, QuizRound
 from image_generator import generate_quiz_image
@@ -21,7 +23,7 @@ from longform_assembler import assemble_longform
 from speed_quiz_assembler import assemble_speed_quiz
 from speed_quiz_audio import build_speed_audio
 from speed_thumbnail import generate_speed_thumbnail
-from photo_fetcher import fetch_photos_batch
+from photo_fetcher import fetch_photos_batch, fetch_photo
 from thumbnail import generate_thumbnail, generate_all_thumbnails, select_best_thumbnail
 from metadata import generate_metadata, generate_speed_metadata, save_metadata
 from sfx_generator import ensure_all_sfx
@@ -29,17 +31,25 @@ from mascot_generator import ensure_mascot_images
 from font_downloader import ensure_fonts
 from music_downloader import ensure_music
 from speed_narration import generate_speed_narration
+from emoji_quiz_generator import (
+    generate_emoji_quiz_pack, EmojiQuizPack, EmojiQuizRound,
+    serialize_emoji_pack, deserialize_emoji_pack,
+)
+from emoji_quiz_assembler import assemble_emoji_quiz
+from emoji_quiz_audio import build_emoji_audio
+from emoji_quiz_narration import generate_emoji_narration
 
 
 def run_pipeline(category: str = None, num_rounds: int = None,
                   output_dir: Path = None, video_format: str = "short") -> Path:
     """
     # Run the complete Leo Quiz pipeline for one video.
-    # Supports 4 formats:
+    # Supports 5 formats:
     #   - "short": 6 rounds, 9:16 vertical (66s) — YouTube Shorts / TikTok / Reels
     #   - "long":  60 rounds, 16:9 landscape (~10min) — YouTube long-form
     #   - "mega":  100 rounds, 16:9 landscape (~15min) — weekly mega quiz
     #   - "speed": 120 rounds, 16:9 landscape (~16min) — Quiz Blitz style speed quiz
+    #   - "emoji": 40 rounds, 16:9 landscape (~6min) — Monkey Quiz style emoji quiz
     # Returns path to the output video file.
     """
     # Default category from day-of-week rotation
@@ -54,6 +64,8 @@ def run_pipeline(category: str = None, num_rounds: int = None,
             num_rounds = config.LONGFORM_ROUNDS       # 60 rounds
         elif video_format == "mega":
             num_rounds = config.MEGA_ROUNDS           # 100 rounds
+        elif video_format == "emoji":
+            num_rounds = config.EMOJI_ROUNDS           # 40 rounds
         else:
             num_rounds = config.ROUNDS_PER_SHORT      # 6 rounds
 
@@ -62,6 +74,8 @@ def run_pipeline(category: str = None, num_rounds: int = None,
         date_str = datetime.now().strftime("%Y-%m-%d")
         if video_format == "speed":
             output_dir = config.LONGFORM_DIR / f"{date_str}_{category}_speed"
+        elif video_format == "emoji":
+            output_dir = config.LONGFORM_DIR / f"{date_str}_{category}_emoji"
         elif video_format in ("long", "mega"):
             output_dir = config.LONGFORM_DIR / f"{date_str}_{category}_{video_format}"
         else:
@@ -95,6 +109,16 @@ def run_pipeline(category: str = None, num_rounds: int = None,
     # Skips files that already exist — drop in your own WAVs to override.
     print("[LEO QUIZ] Step 0d: Checking sound effects...")
     ensure_all_sfx()
+
+    # ================================================================
+    # EMOJI FORMAT — completely separate pipeline
+    # ================================================================
+    # Emoji quiz doesn't need images, silhouettes, or per-round narration.
+    # It uses Gemini to generate emoji clue + answer pairs, then renders
+    # video with big emoji characters and text reveals.
+    # ================================================================
+    if video_format == "emoji":
+        return _run_emoji_pipeline(category, num_rounds, output_dir)
 
     # ================================================================
     # Step 1: Generate quiz content via Gemini (with cache)
@@ -448,15 +472,282 @@ def run_pipeline(category: str = None, num_rounds: int = None,
             meta_file = output_dir / f"metadata_{platform}.json"
             if meta_file.exists():
                 continue
-            if video_format == "speed":
-                meta = generate_speed_metadata(quiz_pack, platform)
-            else:
-                meta = generate_metadata(quiz_pack, platform)
-            save_metadata(meta, meta_file)
+            try:
+                if video_format == "speed":
+                    meta = generate_speed_metadata(quiz_pack, platform)
+                else:
+                    meta = generate_metadata(quiz_pack, platform)
+                save_metadata(meta, meta_file)
+            except RuntimeError as e:
+                # Gemini quota exhausted — skip metadata, don't crash the pipeline
+                print(f"[LEO QUIZ]   SKIPPED {platform} metadata (Gemini unavailable: {e})")
+                print("[LEO QUIZ]   You can write the title/description manually or re-run later")
+                break
 
     print(f"[LEO QUIZ] Pipeline complete! Video: {video_path}")
     print(f"[LEO QUIZ] Format: {video_format}, Duration: ~{total_duration:.0f}s")
     return video_path
+
+
+def _run_emoji_pipeline(category: str, num_rounds: int,
+                         output_dir: Path) -> Path:
+    """
+    # Run the Emoji Quiz pipeline — "Guess the X by Emoji" format.
+    # Monkey Quiz quality with full voiceover narration throughout.
+    #
+    # Steps:
+    #   1. Generate emoji quiz content (wordplay emoji clues via Gemini)
+    #   1.5. Generate voice narration via ElevenLabs (intro, per-round, outro)
+    #   2. Mix audio (music + SFX + voice narration with ducking)
+    #   3. Render video (emoji clues → countdown → answer reveal)
+    #   4. Generate thumbnail
+    #   5. Generate metadata
+    """
+    # ================================================================
+    # Step 1: Generate emoji quiz content (with cache)
+    # ================================================================
+    print("[EMOJI QUIZ] Step 1: Generating emoji quiz content...")
+
+    quiz_pack_path = output_dir / "emoji_pack.json"
+    emoji_pack = None
+
+    # --- Check for cached emoji pack ---
+    if quiz_pack_path.exists():
+        try:
+            with open(quiz_pack_path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            cached_rounds = cached.get("rounds", [])
+            if cached_rounds and len(cached_rounds) >= num_rounds - 1:
+                emoji_pack = deserialize_emoji_pack(cached)
+                print(f"[EMOJI QUIZ]   CACHED -- reusing {len(emoji_pack.rounds)} rounds")
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"[EMOJI QUIZ]   Cache corrupted ({e}), regenerating...")
+            emoji_pack = None
+
+    if emoji_pack is None:
+        emoji_pack = generate_emoji_quiz_pack(category, num_rounds)
+
+    print(f"[EMOJI QUIZ]   Generated {len(emoji_pack.rounds)} rounds")
+    for i, r in enumerate(emoji_pack.rounds):
+        # Use repr for emoji chars to avoid cp1252 encoding errors on Windows
+        clues = " + ".join(repr(e) for e in r.emoji_clues)
+        try:
+            print(f"[EMOJI QUIZ]   Round {i+1}: {clues} = {r.answer} ({r.difficulty})")
+        except UnicodeEncodeError:
+            print(f"[EMOJI QUIZ]   Round {i+1}: [emoji] = {r.answer} ({r.difficulty})")
+
+    # --- Save emoji pack for cache ---
+    pack_data = serialize_emoji_pack(emoji_pack)
+    with open(quiz_pack_path, "w", encoding="utf-8") as f:
+        json.dump(pack_data, f, indent=2, ensure_ascii=False)
+
+    # ================================================================
+    # Step 1.5: Generate voice narration via ElevenLabs
+    # ================================================================
+    print("[EMOJI QUIZ] Step 1.5: Generating voice narration...")
+
+    # --- Extract answer list for narration ---
+    answers = [r.answer for r in emoji_pack.rounds]
+    narr_pack = generate_emoji_narration(
+        category, output_dir, len(emoji_pack.rounds), answers)
+
+    narr_count = sum(1 for p in narr_pack.question_paths if p)
+    print(f"[EMOJI QUIZ]   Narration: {narr_count} question + {narr_count} reveal clips")
+
+    # ================================================================
+    # Step 2: Mix audio (music + SFX + voice narration)
+    # ================================================================
+    print("[EMOJI QUIZ] Step 2: Mixing audio with narration...")
+
+    # --- Calculate total duration using DYNAMIC intro length ---
+    # Intro duration adapts to actual voiceover length (no overlap)
+    from emoji_quiz_assembler import build_emoji_timeline
+    intro_voice_dur = narr_pack.intro_duration + narr_pack.subscribe_duration
+    timeline = build_emoji_timeline(len(emoji_pack.rounds),
+                                     intro_duration=intro_voice_dur)
+    total_duration = timeline[-1]["end"]
+    print(f"[EMOJI QUIZ]   Intro voice: {intro_voice_dur:.1f}s -> "
+          f"intro phase: {timeline[0]['end']:.1f}s")
+
+    music_path = _find_music_track(category)
+    audio_path = output_dir / "audio_mixed.wav"
+
+    if audio_path.exists() and audio_path.stat().st_size > 10000:
+        print("[EMOJI QUIZ]   CACHED audio_mixed.wav -- skipping mix")
+    else:
+        build_emoji_audio(music_path, total_duration, audio_path,
+                           num_rounds=len(emoji_pack.rounds),
+                           narration_pack=narr_pack,
+                           emoji_counts=[len(r.emoji_clues) for r in emoji_pack.rounds])
+
+    # ================================================================
+    # Step 2.5: Fetch answer images from Pexels for reveal screen
+    # ================================================================
+    print("[EMOJI QUIZ] Step 2.5: Fetching answer images...")
+    answer_images = {}
+    photos_dir = output_dir / "answer_photos"
+    photos_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build a smarter search query based on category so Pexels
+    # returns the actual thing (e.g. "catfish animal" not a food dish)
+    cat_info = config.EMOJI_CATEGORIES.get(emoji_pack.category, {})
+    # Map each category to search suffix keywords that disambiguate
+    _PHOTO_SEARCH_HINTS = {
+        "animals": "animal wildlife",       # "catfish animal wildlife" → actual fish
+        "food": "dish meal",                # "pizza dish meal" → food photo
+        "restaurant": "restaurant logo",    # "McDonald's restaurant logo"
+        "candy": "candy sweet",             # "Kit Kat candy sweet"
+        "country": "country landscape",     # "Japan country landscape"
+        "movie": "movie poster",            # "Frozen movie poster"
+        "sport": "sport playing",           # "Tennis sport playing"
+    }
+    search_hint = _PHOTO_SEARCH_HINTS.get(emoji_pack.category, "")
+
+    for i, rnd in enumerate(emoji_pack.rounds):
+        photo_path = photos_dir / f"{i}_{rnd.answer.lower().replace(' ', '_')}.jpg"
+        if photo_path.exists() and photo_path.stat().st_size > 5000:
+            try:
+                answer_images[i] = Image.open(photo_path).convert("RGBA")
+            except Exception:
+                pass
+        else:
+            try:
+                # Use category-aware search query to get the right photo
+                search_query = f"{rnd.answer} {search_hint}".strip()
+                print(f"[EMOJI QUIZ]   Searching Pexels: '{search_query}'")
+                result = fetch_photo(search_query, photo_path, orientation="square")
+                if result and result.exists():
+                    answer_images[i] = Image.open(result).convert("RGBA")
+            except Exception as e:
+                print(f"[EMOJI QUIZ]   Photo failed for {rnd.answer}: {e}")
+
+    print(f"[EMOJI QUIZ]   Got {len(answer_images)}/{len(emoji_pack.rounds)} answer images")
+
+    # ================================================================
+    # Step 3: Render video
+    # ================================================================
+    video_path = output_dir / "video.mp4"
+
+    if video_path.exists() and video_path.stat().st_size > 100000:
+        print(f"[EMOJI QUIZ] Step 3: CACHED video.mp4 "
+              f"({video_path.stat().st_size / 1024 / 1024:.1f} MB) -- skipping render")
+    else:
+        print("[EMOJI QUIZ] Step 3: Rendering video...")
+        assemble_emoji_quiz(emoji_pack, audio_path, video_path,
+                             narration_pack=narr_pack,
+                             answer_images=answer_images)
+
+    # ================================================================
+    # Step 4: Generate thumbnail (reuse existing or generate simple one)
+    # ================================================================
+    thumb_path = output_dir / "thumbnail.png"
+    if not (thumb_path.exists() and thumb_path.stat().st_size > 5000):
+        print("[EMOJI QUIZ] Step 4: Generating thumbnail...")
+        _generate_emoji_thumbnail(emoji_pack, thumb_path)
+    else:
+        print("[EMOJI QUIZ] Step 4: CACHED thumbnail.png — skipping")
+
+    # ================================================================
+    # Step 5: Generate metadata
+    # ================================================================
+    platforms = ("youtube", "tiktok", "instagram", "facebook")
+    meta_paths = [output_dir / f"metadata_{p}.json" for p in platforms]
+    if all(p.exists() for p in meta_paths):
+        print("[EMOJI QUIZ] Step 5: CACHED metadata — skipping")
+    else:
+        print("[EMOJI QUIZ] Step 5: Generating metadata...")
+        for platform in platforms:
+            meta_file = output_dir / f"metadata_{platform}.json"
+            if meta_file.exists():
+                continue
+            try:
+                meta = generate_metadata(
+                    # Wrap emoji pack as a QuizPack-like object for metadata gen
+                    _emoji_to_quiz_pack(emoji_pack), platform)
+                save_metadata(meta, meta_file)
+            except RuntimeError as e:
+                print(f"[EMOJI QUIZ]   SKIPPED {platform} metadata ({e})")
+                break
+
+    print(f"[EMOJI QUIZ] Pipeline complete! Video: {video_path}")
+    print(f"[EMOJI QUIZ] Format: emoji, Duration: ~{total_duration:.0f}s")
+    return video_path
+
+
+def _emoji_to_quiz_pack(emoji_pack: EmojiQuizPack) -> QuizPack:
+    """# Convert EmojiQuizPack to QuizPack for metadata generation."""
+    pack = QuizPack(category=emoji_pack.category)
+    for r in emoji_pack.rounds:
+        clues = " + ".join(r.emoji_clues)
+        pack.rounds.append(QuizRound(
+            answer=r.answer,
+            hint_question=f"Emoji clues: {clues}",
+            fun_fact=r.fun_fact,
+            difficulty=r.difficulty,
+            image_prompt="",
+        ))
+    return pack
+
+
+def _generate_emoji_thumbnail(emoji_pack: EmojiQuizPack,
+                               output_path: Path) -> None:
+    """
+    # Generate a simple thumbnail for emoji quiz videos.
+    # Shows 2-3 emoji from the first round + "GUESS THE [CATEGORY]" text.
+    # Monkey Quiz-style purple gradient background.
+    """
+    from PIL import Image, ImageDraw
+    w, h = 1920, 1080
+
+    # --- Purple gradient background ---
+    c1 = config.EMOJI_BG_GRADIENT_TOP
+    c2 = config.EMOJI_BG_GRADIENT_BOTTOM
+    import numpy as np
+    ratios = np.linspace(0, 1, h, dtype=np.float32).reshape(-1, 1)
+    gradient = np.array(c1, dtype=np.float32) * (1 - ratios) + np.array(c2, dtype=np.float32) * ratios
+    gradient = np.clip(gradient, 0, 255).astype(np.uint8)
+    arr = np.broadcast_to(gradient[:, np.newaxis, :], (h, w, 3)).copy()
+    thumb = Image.fromarray(arr)
+    draw = ImageDraw.Draw(thumb)
+
+    # --- Title text ---
+    cat_info = config.EMOJI_CATEGORIES.get(emoji_pack.category, {})
+    display = cat_info.get("display", emoji_pack.category.upper())
+    title_color = cat_info.get("title_color", (255, 215, 0))
+
+    from frame_composer import _get_font
+    title_font = _get_font(90, bold=True)
+    draw.text((w // 2, 120), "GUESS THE", fill=(255, 255, 255),
+              anchor="mm", font=title_font)
+    cat_font = _get_font(120, bold=True)
+    draw.text((w // 2, 240), display, fill=title_color,
+              anchor="mm", font=cat_font)
+    sub_font = _get_font(60, bold=True)
+    draw.text((w // 2, 340), "BY EMOJI", fill=(255, 255, 255, 200),
+              anchor="mm", font=sub_font)
+
+    # --- Show emoji from first few rounds as sticker images ---
+    from emoji_renderer import get_emoji_image
+    if emoji_pack.rounds:
+        clues = emoji_pack.rounds[0].emoji_clues
+        emoji_size = 160
+        total_w = len(clues) * emoji_size + (len(clues) - 1) * 40
+        start_x = (w - total_w) // 2
+        y_pos = int(h * 0.55) - emoji_size // 2
+        for ci, clue_char in enumerate(clues):
+            eimg = get_emoji_image(clue_char, emoji_size, sticker=True)
+            if eimg:
+                x = start_x + ci * (emoji_size + 40)
+                thumb.paste(eimg, (x, y_pos), eimg)
+
+    # --- Round count ---
+    count_font = _get_font(50, bold=True)
+    draw.text((w // 2, int(h * 0.80)),
+              f"{len(emoji_pack.rounds)} ROUNDS",
+              fill=(255, 215, 0), anchor="mm", font=count_font)
+
+    thumb.save(str(output_path), "PNG")
+    print(f"[EMOJI QUIZ] Thumbnail saved: {output_path.name}")
 
 
 def _find_music_track(category: str) -> Path:
@@ -484,8 +775,8 @@ if __name__ == "__main__":
     parser.add_argument("--rounds", type=int, default=None,
                         help="Number of quiz rounds (default depends on format)")
     parser.add_argument("--format", type=str, default="short",
-                        choices=["short", "long", "mega", "speed"],
-                        help="Video format: short (66s), long (~10min), mega (~15min), speed (~16min)")
+                        choices=["short", "long", "mega", "speed", "emoji"],
+                        help="Video format: short (66s), long (~10min), mega (~15min), speed (~16min), emoji (~6min)")
     parser.add_argument("--output", type=str, default=None,
                         help="Output directory path")
 

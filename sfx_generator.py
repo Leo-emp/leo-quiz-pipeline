@@ -374,6 +374,25 @@ def generate_jingle_outro(path: Path):
     _save_wav(jingle, path)
 
 
+def generate_emoji_pop(path: Path):
+    """
+    # Short bouncy "pop" sound for emoji appearing (150ms).
+    # Rising pitch snap + soft thud — playful cartoon pop feel.
+    """
+    duration = 0.15
+    n = int(SAMPLE_RATE * duration)
+    t_arr = np.linspace(0, duration, n, endpoint=False)
+    # Rising chirp (300Hz → 900Hz) for the snap
+    freq = 300 + 4000 * t_arr
+    chirp = 0.4 * np.sin(2 * np.pi * freq * t_arr)
+    # Soft thud (low 120Hz pulse)
+    thud = _sine_wave(120, duration, 0.3)
+    combined = chirp + thud
+    combined = _envelope(combined, attack=0.003, decay=0.03,
+                         sustain=0.2, release=0.08)
+    _save_wav(combined, path)
+
+
 def generate_countdown_beep(path: Path):
     """
     # Short countdown beep for each number (100ms).
@@ -386,6 +405,30 @@ def generate_countdown_beep(path: Path):
     tone = _envelope(tone, attack=0.005, decay=0.02,
                      sustain=0.4, release=0.03)
     _save_wav(tone, path)
+
+
+def generate_times_up(path: Path):
+    """
+    # Dramatic "time's up" buzzer sound (0.5s).
+    # Low buzzing horn + high alert tone layered together.
+    # Plays at the exact moment the timer expires.
+    """
+    duration = 0.5
+    # Low buzzer horn (150Hz + harmonics for a harsh buzz)
+    buzz = _sine_wave(150, duration, 0.4)
+    buzz += _sine_wave(300, duration, 0.25)
+    buzz += _sine_wave(450, duration, 0.15)
+    # High alert beep (descending pitch for "wrong/time's up" feel)
+    n = int(SAMPLE_RATE * duration)
+    t_arr = np.linspace(0, duration, n, endpoint=False)
+    # Descending from 800Hz to 400Hz
+    freq = 800 - 800 * t_arr
+    alert = 0.3 * np.sin(2 * np.pi * freq * t_arr)
+    # Combine and shape
+    combined = buzz + alert
+    combined = _envelope(combined, attack=0.01, decay=0.05,
+                         sustain=0.7, release=0.15)
+    _save_wav(combined, path)
 
 
 # ============================================================
@@ -798,6 +841,8 @@ def ensure_all_sfx():
     extra_sfx = {
         "correct": generate_correct_chime,
         "countdown_beep": generate_countdown_beep,
+        "times_up": generate_times_up,
+        "emoji_pop": generate_emoji_pop,
     }
 
     generated = []

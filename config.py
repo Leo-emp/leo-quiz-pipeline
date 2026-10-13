@@ -16,7 +16,14 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
 MASCOT_DIR = ASSETS_DIR / "mascot"
+BRANDING_DIR = ASSETS_DIR / "branding"
 SFX_DIR = ASSETS_DIR / "sfx"
+
+# --- Branding assets (used in ALL video formats) ---
+# Intro: full landscape scene with Leo mascot, rainbow, castle
+INTRO_BACKGROUND = BRANDING_DIR / "intro_background.png"
+# Outro/watermark: Leo Quizz logo (transparent PNG)
+LOGO_IMAGE = BRANDING_DIR / "logo.png"
 MUSIC_DIR = ASSETS_DIR / "music"
 FONTS_DIR = ASSETS_DIR / "fonts"
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -210,6 +217,8 @@ SFX_FILES = {
     "jingle_outro": SFX_DIR / "jingle_outro.wav",
     "correct": SFX_DIR / "correct.wav",
     "countdown_beep": SFX_DIR / "countdown_beep.wav",
+    "times_up": SFX_DIR / "times_up.wav",
+    "emoji_pop": SFX_DIR / "emoji_pop.wav",
 }
 
 # --- Gemini image prompt template ---
@@ -319,3 +328,81 @@ SPEED_PHOTO_WIDTH = 700            # photo display width (fits naturally in 1920
 SPEED_PHOTO_HEIGHT = 480           # photo display height
 SPEED_CARD_PADDING = 14            # white border around photo
 SPEED_CARD_RADIUS = 18             # rounded corner radius
+
+# ============================================================
+# EMOJI QUIZ FORMAT — "Guess the X by Emoji" (Monkey Quiz style)
+# 40 rounds, 5-second timer, emoji clues → answer reveal
+# Based on research: Monkey Quiz (18M+ views per video)
+# ============================================================
+
+# --- Emoji quiz structure ---
+EMOJI_ROUNDS = 40                        # 40 rounds total (~6 min video)
+EMOJI_TIMER_SECONDS = 5                  # 5-second guess window
+EMOJI_ROUND_DURATION = 10.0              # 10s per round: 5s timer + 4s reveal/fact + 1s transition
+EMOJI_INTRO_DURATION = 4.0               # Title card + channel branding
+EMOJI_OUTRO_DURATION = 6.0               # Score + subscribe CTA + celebration
+EMOJI_SECTION_CARD_DURATION = 3.0        # "EASY LEVEL" / "MEDIUM LEVEL" etc.
+
+# --- Emoji round sub-timings (offsets within each 10s round) ---
+EMOJI_EMOJI_START = 0.0                  # Emoji clues slide in
+EMOJI_EMOJI_SETTLE = 0.5                 # Emoji fully visible, timer starts
+EMOJI_TIMER_START = 0.5                  # Countdown timer bar begins
+EMOJI_REVEAL_START = 5.5                 # Answer photo + name reveals
+EMOJI_FACT_START = 7.0                   # Fun fact overlay (1.5s reveal → fact)
+EMOJI_TRANSITION_START = 9.0             # Split transition to next round (1s)
+
+# --- Difficulty tiers (20 easy + 10 medium + 10 hard = 40) ---
+EMOJI_DIFFICULTIES = ["EASY", "MEDIUM", "HARD"]
+EMOJI_ROUNDS_PER_DIFFICULTY = {"EASY": 20, "MEDIUM": 10, "HARD": 10}
+
+# --- Emoji quiz category types ---
+# Each emoji category defines what kinds of things can be guessed
+EMOJI_CATEGORIES = {
+    "animals": {"display": "ANIMAL", "prompt_hint": "real animals from around the world",
+                "title_color": (255, 215, 0)},   # gold
+    "food": {"display": "FOOD", "prompt_hint": "foods, dishes, and meals from around the world",
+             "title_color": (255, 87, 51)},       # coral
+    "restaurant": {"display": "RESTAURANT", "prompt_hint": "famous fast food and restaurant chains",
+                   "title_color": (255, 51, 51)},  # red
+    "candy": {"display": "CANDY", "prompt_hint": "candy, sweets, and desserts",
+              "title_color": (255, 105, 180)},     # pink
+    "country": {"display": "COUNTRY", "prompt_hint": "countries and their landmarks",
+                "title_color": (0, 191, 255)},     # blue
+    "movie": {"display": "MOVIE", "prompt_hint": "famous movies and animated films",
+              "title_color": (255, 165, 0)},       # orange
+    "sport": {"display": "SPORT", "prompt_hint": "sports and athletic activities",
+              "title_color": (50, 205, 50)},       # green
+}
+
+# --- Emoji quiz background gradients (different color per category) ---
+# Default purple (used as fallback)
+EMOJI_BG_GRADIENT_TOP = (88, 28, 135)       # deep purple
+EMOJI_BG_GRADIENT_BOTTOM = (134, 25, 143)   # magenta-purple
+
+# Per-category background gradients (Monkey Quiz uses different bg per video)
+EMOJI_BG_GRADIENTS = {
+    "animals":    {"top": (200, 20, 80),  "bottom": (255, 60, 120)},   # hot pink
+    "food":       {"top": (20, 80, 180),  "bottom": (40, 130, 220)},   # ocean blue
+    "restaurant": {"top": (180, 20, 20),  "bottom": (220, 50, 50)},    # deep red
+    "candy":      {"top": (200, 40, 160), "bottom": (240, 80, 200)},   # magenta pink
+    "country":    {"top": (20, 120, 80),  "bottom": (40, 180, 120)},   # emerald green
+    "movie":      {"top": (88, 28, 135),  "bottom": (134, 25, 143)},   # classic purple
+    "sport":      {"top": (20, 80, 200),  "bottom": (40, 120, 240)},   # bright blue
+}
+
+# --- Emoji quiz difficulty badge colors ---
+EMOJI_DIFFICULTY_COLORS = {
+    "EASY": (46, 204, 113),        # green
+    "MEDIUM": (241, 196, 15),      # yellow
+    "HARD": (231, 76, 60),         # red
+    "IMPOSSIBLE": (142, 68, 173),  # purple
+}
+
+# --- Emoji quiz typography ---
+EMOJI_TITLE_FONT_SIZE = 72         # "GUESS THE ANIMAL" header
+EMOJI_CLUE_FONT_SIZE = 140         # Large emoji characters (must be BIG)
+EMOJI_PLUS_FONT_SIZE = 80          # "+" between emoji
+EMOJI_ANSWER_FONT_SIZE = 72        # Answer reveal text
+EMOJI_ROUND_FONT_SIZE = 36         # Round counter
+EMOJI_TIMER_BAR_HEIGHT = 40        # Countdown timer bar height
+EMOJI_SECTION_FONT_SIZE = 100      # "EASY LEVEL" section card text

@@ -168,9 +168,16 @@ def _generate_voice_clip(text: str, output_path: Path) -> Path:
             },
         )
 
+        # ElevenLabs SDK v2.45+ returns (key, value) tuples instead of objects
         audio_bytes = b""
         for chunk in response:
-            if hasattr(chunk, "audio_base64") and chunk.audio_base64:
+            if isinstance(chunk, tuple) and len(chunk) == 2:
+                key, value = chunk
+                # Key is "audio_base_64" (underscore between base and 64)
+                if key == "audio_base_64" and value:
+                    audio_bytes += base64.b64decode(value)
+            elif hasattr(chunk, "audio_base64") and chunk.audio_base64:
+                # Legacy SDK fallback
                 audio_bytes += base64.b64decode(chunk.audio_base64)
 
         with open(output_path, "wb") as f:

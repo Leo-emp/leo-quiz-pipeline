@@ -9,14 +9,18 @@
 #   1. Flux Pro v1.1 Ultra (fal.ai) — highest quality, consistent style
 #   2. Gemini Flash — free tier, good quality
 #   3. Imagen 4 — requires paid Gemini plan
-#   4. PIL placeholder — colored circle with text (last resort)
+#   4. Pexels stock photo — free API, real animal photos
+#   5. PIL placeholder — colored circle with text (last resort)
 #
 # Flux Pro uses a locked kids illustration style suffix so every
 # image in the video shares the same art style. No random AI salad.
 # ============================================================
 import io
+import json
 import os
 import requests
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -74,6 +78,13 @@ def generate_quiz_image(round_data: QuizRound, output_path: Path) -> Path:
         return _generate_with_imagen(prompt, output_path)
     except Exception as e:
         print(f"[IMAGE] Imagen 4 failed: {e}")
+
+    # --- Try Pexels stock photo (free API key, real images) ---
+    if config.PEXELS_API_KEY:
+        try:
+            return _generate_with_pexels(round_data.answer, output_path)
+        except Exception as e:
+            print(f"[IMAGE] Pexels failed: {e}")
 
     # --- PIL placeholder as last resort ---
     print(f"[IMAGE] Using PIL placeholder for: {round_data.answer}")
@@ -219,6 +230,67 @@ def _generate_with_imagen(prompt: str, output_path: Path) -> Path:
         return output_path
 
     raise RuntimeError("Imagen returned no images")
+
+
+def _generate_with_pexels(answer: str, output_path: Path) -> Path:
+    """
+    # Fetch a real photo from Pexels, remove background with rembg,
+    # and place subject on white background for clean silhouette extraction.
+    # Free Pexels API key from pexels.com/api — no cost.
+    """
+    import random
+    from rembg import remove as rembg_remove
+
+    search_queries = [
+        f"{answer} animal",
+        answer,
+    ]
+
+    for query in search_queries:
+        params = urllib.parse.urlencode({
+            "query": query,
+            "per_page": 5,
+            "size": "medium",
+        })
+        url = f"https://api.pexels.com/v1/search?{params}"
+        req = urllib.request.Request(url, headers={
+            "Authorization": config.PEXELS_API_KEY,
+            "User-Agent": "LeoQuiz-Pipeline/2.0",
+        })
+        response = urllib.request.urlopen(req, timeout=15)
+        data = json.loads(response.read().decode("utf-8"))
+
+        photos = data.get("photos", [])
+        if photos:
+            photo = random.choice(photos[:min(3, len(photos))])
+            img_url = photo["src"].get("large2x", photo["src"]["large"])
+
+            # Download the image
+            img_data = urllib.request.urlopen(
+                urllib.request.Request(img_url, headers={"User-Agent": "LeoQuiz-Pipeline/2.0"}),
+                timeout=30
+            ).read()
+
+            # Remove background with rembg — gives clean subject cutout
+            print(f"[IMAGE] Removing background for: {answer}...")
+            clean_data = rembg_remove(img_data)
+            img = Image.open(io.BytesIO(clean_data)).convert("RGBA")
+
+            # Resize to 1024x1024 square (crop to center)
+            size = min(img.width, img.height)
+            left = (img.width - size) // 2
+            top = (img.height - size) // 2
+            img = img.crop((left, top, left + size, top + size))
+            img = img.resize((1024, 1024), Image.LANCZOS)
+
+            # Place on white background for silhouette extraction
+            result = Image.new("RGB", (1024, 1024), (255, 255, 255))
+            result.paste(img, (0, 0), img)
+            result.save(str(output_path), "PNG")
+            print(f"[IMAGE] Pexels + rembg saved: {output_path.name}")
+            return output_path
+
+    raise RuntimeError(f"No Pexels results for '{answer}'")
 
 
 def _generate_placeholder(answer: str, output_path: Path) -> Path:

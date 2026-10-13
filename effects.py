@@ -267,8 +267,13 @@ class GlowRing:
         current_radius = int(radius * (0.85 + 0.30 * pulse))
         current_opacity = int(50 + 80 * pulse)  # 50-130 alpha range
 
-        # Create glow on transparent layer
-        glow = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+        # Use a small cropped region around the ring instead of full 1080x1920
+        max_ring_radius = current_radius + 2 * 15
+        margin = 8 * 3 + 4  # blur_radius * 3 + ring stroke width
+        crop_size = (max_ring_radius + margin) * 2
+        local_c = crop_size // 2
+
+        glow = Image.new("RGBA", (crop_size, crop_size), (0, 0, 0, 0))
         glow_draw = ImageDraw.Draw(glow)
 
         # Draw concentric circles for soft glow gradient (outer = more transparent)
@@ -277,16 +282,30 @@ class GlowRing:
             ring_opacity = max(10, current_opacity - ring * 35)
             ring_color = color + (ring_opacity,)
             glow_draw.ellipse([
-                center_x - ring_radius, center_y - ring_radius,
-                center_x + ring_radius, center_y + ring_radius,
+                local_c - ring_radius, local_c - ring_radius,
+                local_c + ring_radius, local_c + ring_radius,
             ], outline=ring_color, width=4)
 
-        # Blur the glow for soft edges
+        # Blur the small crop (much faster than full-frame blur)
         glow = glow.filter(ImageFilter.GaussianBlur(8))
 
         if frame.mode != "RGBA":
             frame = frame.convert("RGBA")
-        return Image.alpha_composite(frame, glow)
+
+        # Composite the cropped glow onto the frame at the right position
+        paste_x = center_x - local_c
+        paste_y = center_y - local_c
+        fw, fh = frame.size
+        # Clamp source/dest coords to stay in bounds
+        sx1, sy1 = max(0, -paste_x), max(0, -paste_y)
+        dx1, dy1 = max(0, paste_x), max(0, paste_y)
+        sx2 = min(crop_size, fw - paste_x)
+        sy2 = min(crop_size, fh - paste_y)
+        if sx2 > sx1 and sy2 > sy1:
+            region = frame.crop((dx1, dy1, dx1 + sx2 - sx1, dy1 + sy2 - sy1))
+            glow_crop = glow.crop((sx1, sy1, sx2, sy2))
+            frame.paste(Image.alpha_composite(region, glow_crop), (dx1, dy1))
+        return frame
 
 
 # ============================================================
@@ -318,33 +337,45 @@ class ProgressIndicator:
         total_width = total_rounds * dot_gap
         start_x = (w - total_width) // 2 + dot_gap // 2
 
-        overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+        # Use a small strip instead of full-frame overlay
+        max_pulse_r = int(dot_radius * 1.3) + 2
+        strip_x1 = max(0, start_x - max_pulse_r - 2)
+        strip_x2 = min(w, start_x + (total_rounds - 1) * dot_gap + max_pulse_r + 2)
+        strip_y1 = max(0, y - max_pulse_r - 2)
+        strip_y2 = min(h, y + max_pulse_r + 2)
+        strip_w = strip_x2 - strip_x1
+        strip_h = strip_y2 - strip_y1
+
+        overlay = Image.new("RGBA", (strip_w, strip_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
+        # Local coords offset
+        lx_off = strip_x1
+        ly_off = strip_y1
 
         for i in range(total_rounds):
-            cx = start_x + i * dot_gap
+            cx = start_x + i * dot_gap - lx_off
+            cy = y - ly_off
 
             if i < current_round:
-                # Completed round — filled circle with checkmark feel
-                draw.ellipse([cx - dot_radius, y - dot_radius,
-                              cx + dot_radius, y + dot_radius],
+                draw.ellipse([cx - dot_radius, cy - dot_radius,
+                              cx + dot_radius, cy + dot_radius],
                              fill=color + (220,))
             elif i == current_round:
-                # Current round — pulsing circle
                 pulse = 0.5 + 0.5 * math.sin(t * 4)
                 r = int(dot_radius * (1.0 + 0.3 * pulse))
                 alpha = int(180 + 75 * pulse)
-                draw.ellipse([cx - r, y - r, cx + r, y + r],
+                draw.ellipse([cx - r, cy - r, cx + r, cy + r],
                              fill=color + (alpha,), outline=color + (255,), width=2)
             else:
-                # Future round — outlined circle
-                draw.ellipse([cx - dot_radius, y - dot_radius,
-                              cx + dot_radius, y + dot_radius],
+                draw.ellipse([cx - dot_radius, cy - dot_radius,
+                              cx + dot_radius, cy + dot_radius],
                              outline=color + (100,), width=2)
 
         if frame.mode != "RGBA":
             frame = frame.convert("RGBA")
-        return Image.alpha_composite(frame, overlay)
+        region = frame.crop((strip_x1, strip_y1, strip_x2, strip_y2))
+        frame.paste(Image.alpha_composite(region, overlay), (strip_x1, strip_y1))
+        return frame
 
 
 # ============================================================
@@ -476,9 +507,6 @@ class CountdownBar:
         progress = max(0.0, min(1.0, progress))
         w, h = frame.size
 
-        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-
         bar_full_w = int(w * bar_width_ratio)
         bar_x = (w - bar_full_w) // 2
         bar_y = int(h * y_position)
@@ -486,19 +514,30 @@ class CountdownBar:
 
         # Color shifts: green → yellow → red as time runs out
         if remaining > 0.5:
-            # Green zone
             bar_color = (80, 220, 100, 200)
         elif remaining > 0.25:
-            # Yellow zone
             bar_color = (255, 220, 50, 220)
         else:
-            # Red zone — pulse for urgency
             pulse = 0.7 + 0.3 * math.sin(progress * 20)
             bar_color = (255, int(60 * pulse), int(60 * pulse), 240)
 
+        # Use a small strip instead of full-frame overlay
+        pad = 4
+        strip_x1 = max(0, bar_x - pad)
+        strip_x2 = min(w, bar_x + bar_full_w + pad)
+        strip_y1 = max(0, bar_y - pad)
+        strip_y2 = min(h, bar_y + bar_height + pad)
+        sw = strip_x2 - strip_x1
+        sh = strip_y2 - strip_y1
+        lx = bar_x - strip_x1
+        ly = bar_y - strip_y1
+
+        overlay = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
         # Background track (dark, subtle)
         draw.rounded_rectangle(
-            [bar_x, bar_y, bar_x + bar_full_w, bar_y + bar_height],
+            [lx, ly, lx + bar_full_w, ly + bar_height],
             radius=bar_height // 2,
             fill=(0, 0, 0, 80)
         )
@@ -506,22 +545,24 @@ class CountdownBar:
         # Filled portion (remaining time)
         filled_w = max(bar_height, int(bar_full_w * remaining))
         draw.rounded_rectangle(
-            [bar_x, bar_y, bar_x + filled_w, bar_y + bar_height],
+            [lx, ly, lx + filled_w, ly + bar_height],
             radius=bar_height // 2,
             fill=bar_color
         )
 
         # Bright tip at the end of the filled portion
         if remaining > 0.05:
-            tip_x = bar_x + filled_w - bar_height // 2
+            tip_x = lx + filled_w - bar_height // 2
             draw.ellipse(
-                [tip_x - 3, bar_y - 2, tip_x + 3, bar_y + bar_height + 2],
+                [tip_x - 3, ly - 2, tip_x + 3, ly + bar_height + 2],
                 fill=(255, 255, 255, 180)
             )
 
         if frame.mode != "RGBA":
             frame = frame.convert("RGBA")
-        return Image.alpha_composite(frame, overlay)
+        region = frame.crop((strip_x1, strip_y1, strip_x2, strip_y2))
+        frame.paste(Image.alpha_composite(region, overlay), (strip_x1, strip_y1))
+        return frame
 
 
 # ============================================================
@@ -545,23 +586,41 @@ def render_glow_text(frame: Image.Image, text: str,
     from frame_composer import _get_font
     font = _get_font(font_size)
 
-    # --- Step 1: Draw glow layer (blurred colored text behind main text) ---
-    glow_layer = Image.new("RGBA", frame.size, (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow_layer)
-    # Draw text in glow color at slightly larger size for spread
-    glow_draw.text(position, text, font=font,
-                   fill=glow_color + (200,), anchor="mm")
-    # Blur to create the glow spread
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(glow_radius))
-    frame = Image.alpha_composite(frame, glow_layer)
+    # --- Measure text bounds to blur only the text region (not full frame) ---
+    bbox = font.getbbox(text, anchor="mm")
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    margin = glow_radius * 3
+    # Crop region around the text for blurring (much smaller than full frame)
+    crop_w = text_w + margin * 2
+    crop_h = text_h + margin * 2
+    # Text center relative to crop
+    local_pos = (crop_w // 2, crop_h // 2)
 
-    # --- Step 2: Draw a second glow pass for extra intensity ---
-    glow2 = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+    # --- Step 1: Draw glow layer on small crop, blur, paste onto frame ---
+    glow_layer = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
+    glow_draw = ImageDraw.Draw(glow_layer)
+    glow_draw.text(local_pos, text, font=font,
+                   fill=glow_color + (200,), anchor="mm")
+    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(glow_radius))
+    # Paste cropped glow onto frame at the right position
+    paste_x = position[0] - crop_w // 2
+    paste_y = position[1] - crop_h // 2
+    frame.paste(Image.alpha_composite(
+        frame.crop((paste_x, paste_y, paste_x + crop_w, paste_y + crop_h)),
+        glow_layer
+    ), (paste_x, paste_y))
+
+    # --- Step 2: Second glow pass for extra intensity ---
+    glow2 = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
     glow2_draw = ImageDraw.Draw(glow2)
-    glow2_draw.text(position, text, font=font,
+    glow2_draw.text(local_pos, text, font=font,
                     fill=glow_color + (150,), anchor="mm")
     glow2 = glow2.filter(ImageFilter.GaussianBlur(glow_radius // 2))
-    frame = Image.alpha_composite(frame, glow2)
+    frame.paste(Image.alpha_composite(
+        frame.crop((paste_x, paste_y, paste_x + crop_w, paste_y + crop_h)),
+        glow2
+    ), (paste_x, paste_y))
 
     # --- Step 3: Draw crisp main text on top ---
     main_draw = ImageDraw.Draw(frame)
@@ -670,39 +729,38 @@ def render_text_wrapped(frame: Image.Image, text: str,
 # Vignette overlay — darkens edges for cinematic depth
 # ============================================================
 
+# --- Vignette cache: computed once per (width, height, intensity), reused every frame ---
+_vignette_cache = {}
+
 def apply_vignette(frame: Image.Image, intensity: float = 0.4) -> Image.Image:
     """
     # Apply a vignette (darkened edges) to the frame.
-    # Creates cinematic depth and draws focus to the center.
-    # intensity: 0.0 = no vignette, 1.0 = heavy vignette
+    # OPTIMIZED: vignette mask is computed once and cached — was the #1 bottleneck
+    # (700+ ellipses redrawn every frame). Now costs only a numpy multiply.
     """
     if frame.mode != "RGBA":
         frame = frame.convert("RGBA")
 
     w, h = frame.size
-    # Create radial gradient: white center, black edges
-    vignette = Image.new("L", (w, h), 0)
-    draw = ImageDraw.Draw(vignette)
+    cache_key = (w, h, intensity)
 
-    # Draw concentric ellipses — bright at center, dark at edges
-    cx, cy = w // 2, h // 2
-    max_radius = int(math.sqrt(cx ** 2 + cy ** 2))
-    for r in range(max_radius, 0, -2):
-        # Brightness falls off with distance from center
-        progress = r / max_radius
-        brightness = int(255 * (1 - progress * progress * intensity))
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=brightness)
+    if cache_key not in _vignette_cache:
+        # Compute vignette with numpy (fast vectorized) instead of PIL ellipse loop
+        cy, cx = h / 2, w / 2
+        y_coords = np.arange(h).reshape(-1, 1)
+        x_coords = np.arange(w).reshape(1, -1)
+        # Normalized distance from center (0 at center, 1 at corners)
+        dist = np.sqrt(((x_coords - cx) / cx) ** 2 + ((y_coords - cy) / cy) ** 2)
+        # Store as uint8 (0-255) to save memory — avoids float32 intermediates
+        vig_mask = np.clip(1.0 - dist * dist * intensity, 0.0, 1.0)
+        _vignette_cache[cache_key] = (vig_mask * 255).astype(np.uint8)
 
-    # Apply vignette as darkening mask
-    # Multiply frame brightness by vignette mask
-    frame_arr = np.array(frame).astype(np.float32)
-    vig_arr = np.array(vignette).astype(np.float32) / 255.0
-    # Apply to RGB channels only, keep alpha intact
-    frame_arr[:, :, 0] *= vig_arr
-    frame_arr[:, :, 1] *= vig_arr
-    frame_arr[:, :, 2] *= vig_arr
-
-    return Image.fromarray(frame_arr.astype(np.uint8))
+    vig_uint8 = _vignette_cache[cache_key]  # (h, w) uint8, 0-255
+    frame_arr = np.array(frame)
+    # Apply vignette channel-by-channel with uint16 math — peak ~4MB vs ~56MB before
+    for c in range(3):
+        frame_arr[:, :, c] = (frame_arr[:, :, c].astype(np.uint16) * vig_uint8) >> 8
+    return Image.fromarray(frame_arr)
 
 
 # ============================================================

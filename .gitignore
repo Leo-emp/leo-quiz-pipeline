@@ -9,3 +9,6 @@ history.json
 *.mp3
 .venv/
 .superpowers/
+assets/emoji/
+assets/backgrounds/
+assets/branding/

@@ -187,11 +187,10 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
 
     # --- Layer 3: Sparkle particles ---
     if ctx.particle_system:
-        frame_arr = np.array(frame)[:, :, :3]
-        frame_arr = ctx.particle_system.render(frame_arr, t)
-        alpha = np.array(frame)[:, :, 3:]
+        full_arr = np.array(frame)
+        frame_arr = ctx.particle_system.render(full_arr[:, :, :3], t)
         frame = Image.fromarray(
-            np.concatenate([frame_arr, alpha], axis=2)
+            np.concatenate([frame_arr, full_arr[:, :, 3:]], axis=2)
         )
 
     # Find current timeline event
@@ -234,7 +233,10 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
             mascot_scale = compute_scale(intro_elapsed, 0.2, 0.5, "back_out")
             mascot_h = int(h * 0.30)
             mascot_w = int(mascot.width * (mascot_h / mascot.height))
-            mascot_resized = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+            mascot_key = ("mascot", "waving", mascot_w, mascot_h)
+            if mascot_key not in ctx._image_cache:
+                ctx._image_cache[mascot_key] = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+            mascot_resized = ctx._image_cache[mascot_key]
             # Slide up from below frame
             mascot_y = int(h * 0.65 + (1 - mascot_scale) * h * 0.3)
             frame = _composite_image_on_frame(
@@ -286,7 +288,10 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
             mascot = ctx.mascot_images["excited"]
             mascot_h = int(h * 0.25)
             mascot_w = int(mascot.width * (mascot_h / mascot.height))
-            mascot_resized = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+            mascot_key = ("mascot", "excited_outro", mascot_w, mascot_h)
+            if mascot_key not in ctx._image_cache:
+                ctx._image_cache[mascot_key] = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+            mascot_resized = ctx._image_cache[mascot_key]
             bounce = compute_bounce_y(t, amplitude=8.0, period=0.6)
             frame = _composite_image_on_frame(
                 frame, mascot_resized, w // 2, int(h * 0.82) + int(bounce)
@@ -341,10 +346,14 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
         frame = GlowRing.render(frame, content_center_x, content_center_y,
                                 int(content_size * 0.6), primary_rgb, t)
 
-        # Show silhouette with slide-in animation
+        # Show silhouette with slide-in animation (cached to avoid disk read every frame)
         if round_idx < len(ctx.silhouette_paths):
-            sil = Image.open(ctx.silhouette_paths[round_idx]).convert("RGBA")
-            sil = sil.resize((content_size, content_size), Image.LANCZOS)
+            sil_cache_key = ("sil", round_idx, content_size)
+            if sil_cache_key not in ctx._image_cache:
+                sil = Image.open(ctx.silhouette_paths[round_idx]).convert("RGBA")
+                sil = sil.resize((content_size, content_size), Image.LANCZOS)
+                ctx._image_cache[sil_cache_key] = sil
+            sil = ctx._image_cache[sil_cache_key]
 
             # CubicEaseOut slide from off-screen to center
             slide_progress = compute_scale(
@@ -527,12 +536,17 @@ def render_frame(t: float, ctx: VideoContext) -> np.ndarray:
         mascot = ctx.mascot_images[mascot_pose]
         mascot_h = int(h * 0.13)
         mascot_w = int(mascot.width * (mascot_h / mascot.height))
-        mascot_resized = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+        # Cache the resized mascot — same size every frame per pose
+        mascot_key = ("mascot", mascot_pose, mascot_w, mascot_h)
+        if mascot_key not in ctx._image_cache:
+            ctx._image_cache[mascot_key] = mascot.resize((mascot_w, mascot_h), Image.LANCZOS)
+        mascot_resized = ctx._image_cache[mascot_key]
 
         # Idle bounce — gentle bobbing
         bounce_y = compute_bounce_y(t, amplitude=4.0, period=1.0)
         mascot_x = w - mascot_w // 2 - 40
-        mascot_y = h - mascot_h // 2 - 60 + int(bounce_y)
+        # Position mascot above the score bar (was -60, too low and cut off)
+        mascot_y = int(h * 0.78) + int(bounce_y)
 
         # Scale pulse on reveal — mascot gets excited
         m_scale = 1.0
@@ -592,12 +606,18 @@ def assemble_short(quiz_pack: QuizPack, image_paths: list[Path],
     total_duration = config.INTRO_DURATION + num_rounds * config.ROUND_DURATION + config.OUTRO_DURATION
 
     # Load mascot images (pre-generated PNG poses)
+    # Remove white background so mascot floats over the video cleanly
     mascot_images = {}
     if mascot_dir is None:
         mascot_dir = config.MASCOT_DIR
     for pose_name, pose_path in config.MASCOT_POSES.items():
         if pose_path.exists():
-            mascot_images[pose_name] = Image.open(pose_path).convert("RGBA")
+            img = Image.open(pose_path).convert("RGBA")
+            arr = np.array(img)
+            # White/near-white pixels → transparent (threshold 230)
+            white_mask = (arr[:, :, 0] > 230) & (arr[:, :, 1] > 230) & (arr[:, :, 2] > 230)
+            arr[white_mask, 3] = 0
+            mascot_images[pose_name] = Image.fromarray(arr)
 
     # Build complete timeline
     timeline = build_full_timeline(num_rounds)
