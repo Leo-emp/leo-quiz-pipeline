@@ -98,7 +98,11 @@ _clue_bg_config: dict = None
 _reveal_bg_cache: Image.Image = None
 _reveal_bg_config: dict = None
 _transition_bg_cache: Image.Image = None
+_transition_top_cache: Image.Image = None
+_transition_bot_cache: Image.Image = None
 _outro_bg_cache: Image.Image = None
+_outro_top_cache: Image.Image = None
+_outro_bot_cache: Image.Image = None
 
 
 def _load_scene_bg(bg_config: dict, w: int, h: int) -> Image.Image:
@@ -154,17 +158,23 @@ def _init_scene_backgrounds(w: int, h: int, seed: int = None):
         print("[EMOJI] No reveal backgrounds found — using gradient fallback")
 
     # Load transition slide (Leo Quizz branded bumper between rounds)
+    # Pre-split into top/bottom halves for the split animation
     trans_path = _BG_DIR / "transition.png"
     if trans_path.exists():
         _transition_bg_cache = _load_scene_bg({"file": "transition.png"}, w, h)
+        _transition_top_cache = _transition_bg_cache.crop((0, 0, w, h // 2))
+        _transition_bot_cache = _transition_bg_cache.crop((0, h // 2, w, h))
         print("[EMOJI] Transition BG: loaded")
     else:
         _transition_bg_cache = None
 
     # Load outro background ("Good Job!" celebration scene)
+    # Pre-split into top/bottom halves for split entrance animation
     outro_path = _BG_DIR / "outro.png"
     if outro_path.exists():
         _outro_bg_cache = _load_scene_bg({"file": "outro.png"}, w, h)
+        _outro_top_cache = _outro_bg_cache.crop((0, 0, w, h // 2))
+        _outro_bot_cache = _outro_bg_cache.crop((0, h // 2, w, h))
         print("[EMOJI] Outro BG: loaded")
     else:
         _outro_bg_cache = None
@@ -295,8 +305,8 @@ def build_emoji_timeline(num_rounds: int,
 # ============================================================
 
 # --- Caches for backgrounds (keyed by category + size) ---
-_bg_cache = {}
-_emoji_pattern_cache = {}
+_bg_composite_cache = {}
+_spotlight_cache = {}
 
 
 def _render_bg(w: int, h: int, t: float,
@@ -306,35 +316,29 @@ def _render_bg(w: int, h: int, t: float,
     # Hot pink for animals, blue for food, red for restaurants, etc.
     # Adds a subtle emoji pattern overlay for visual texture.
     # Animated radial spotlight for cinematic depth.
+    #
+    # PERF: gradient + emoji pattern are pre-composited once and cached.
+    # Spotlight is pre-rendered as a single radial image and shifted per frame.
     """
-    # --- Get per-category gradient colors ---
-    gradients = config.EMOJI_BG_GRADIENTS.get(category, {})
-    c1_tuple = gradients.get("top", config.EMOJI_BG_GRADIENT_TOP)
-    c2_tuple = gradients.get("bottom", config.EMOJI_BG_GRADIENT_BOTTOM)
+    # --- Build and cache the gradient + pattern composite (once) ---
+    composite_key = (w, h, category)
+    if composite_key not in _bg_composite_cache:
+        gradients = config.EMOJI_BG_GRADIENTS.get(category, {})
+        c1_tuple = gradients.get("top", config.EMOJI_BG_GRADIENT_TOP)
+        c2_tuple = gradients.get("bottom", config.EMOJI_BG_GRADIENT_BOTTOM)
 
-    cache_key = (w, h, c1_tuple, c2_tuple)
-    if cache_key not in _bg_cache:
-        # --- Build vertical gradient ---
         c1 = np.array(c1_tuple, dtype=np.float32)
         c2 = np.array(c2_tuple, dtype=np.float32)
         ratios = np.linspace(0, 1, h, dtype=np.float32).reshape(-1, 1)
         gradient = c1 * (1 - ratios) + c2 * ratios
-        # Subtle brightness curve for depth
         brightness = 1.0 + 0.1 * np.sin(ratios * math.pi)
         gradient *= brightness
         gradient = np.clip(gradient, 0, 255).astype(np.uint8)
         arr = np.broadcast_to(gradient[:, np.newaxis, :], (h, w, 3)).copy()
-        _bg_cache[cache_key] = Image.fromarray(arr)
+        bg = Image.fromarray(arr).convert("RGBA")
 
-    bg = _bg_cache[cache_key].copy().convert("RGBA")
-
-    # --- Emoji pattern overlay (subtle tiled emoji at low opacity) ---
-    pattern_key = (w, h, category)
-    if pattern_key not in _emoji_pattern_cache:
-        # Build a repeating grid of small emoji at very low opacity
+        # Emoji pattern overlay (subtle tiled emoji)
         pattern = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        cat_info = config.EMOJI_CATEGORIES.get(category, {})
-        # Pick a few decorative emoji per category
         deco_map = {
             "animals": ["🐾", "🦁", "🐵"],
             "food": ["🍕", "🍔", "🌮"],
@@ -345,42 +349,48 @@ def _render_bg(w: int, h: int, t: float,
             "sport": ["⚽", "🏀", "🏆"],
         }
         deco_emoji = deco_map.get(category, ["⭐", "✨", "🎯"])
-        # Tile emoji across the frame at 40px, very faint
         emoji_size = 40
-        spacing = 140  # grid spacing
+        spacing = 140
         for row in range(0, h, spacing):
             for col in range(0, w, spacing):
                 idx = ((row // spacing) + (col // spacing)) % len(deco_emoji)
                 try:
-                    # No sticker effect for background deco (subtle pattern)
                     em_img = get_emoji_image(deco_emoji[idx], emoji_size,
                                              sticker=False)
                     if em_img is None:
                         continue
-                    # Reduce opacity to ~12% for subtle background texture
                     em_arr = np.array(em_img)
                     em_arr[:, :, 3] = (em_arr[:, :, 3] * 0.12).astype(np.uint8)
                     faint = Image.fromarray(em_arr)
                     pattern.paste(faint, (col, row), faint)
                 except Exception:
                     pass
-        _emoji_pattern_cache[pattern_key] = pattern
 
-    bg = Image.alpha_composite(bg, _emoji_pattern_cache[pattern_key])
+        _bg_composite_cache[composite_key] = Image.alpha_composite(bg, pattern)
 
-    # --- Animated radial spotlight ---
-    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    cx = int(w * 0.5 + w * 0.12 * math.sin(t * 0.25))
-    cy = int(h * 0.38)
-    radius = int(w * 0.45)
-    for r in range(radius, 0, -6):
-        progress = r / radius
-        alpha = int(15 * (1 - progress * progress))
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r],
-                     fill=(255, 255, 255, alpha))
+    # --- Build and cache the spotlight radial gradient (once) ---
+    spot_key = (w, h)
+    if spot_key not in _spotlight_cache:
+        radius = int(w * 0.45)
+        spot_size = radius * 2
+        spot_img = Image.new("RGBA", (spot_size, spot_size), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(spot_img)
+        for r in range(radius, 0, -6):
+            progress = r / radius
+            alpha = int(15 * (1 - progress * progress))
+            sd.ellipse([radius - r, radius - r, radius + r, radius + r],
+                       fill=(255, 255, 255, alpha))
+        _spotlight_cache[spot_key] = spot_img
 
-    return Image.alpha_composite(bg, overlay)
+    # --- Compose: cached bg + shifted spotlight ---
+    bg = _bg_composite_cache[composite_key].copy()
+    spot = _spotlight_cache[spot_key]
+    spot_r = spot.width // 2
+    cx = int(w * 0.5 + w * 0.12 * math.sin(t * 0.25)) - spot_r
+    cy = int(h * 0.38) - spot_r
+    bg.paste(spot, (cx, cy), spot)
+
+    return bg
 
 
 # ============================================================
@@ -1351,13 +1361,14 @@ def _render_intro_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
 # Section card background images (pre-rendered with baked-in text)
 _SECTION_BG_DIR = config.ASSETS_DIR / "backgrounds" / "section"
 _section_bg_cache: dict[str, Image.Image] = {}
+_section_halves_cache: dict[str, tuple] = {}
 
 
 def _get_section_bg(difficulty: str, w: int, h: int) -> Image.Image:
     """# Load and cache the section card background for a difficulty."""
     key = difficulty.upper()
     if key in _section_bg_cache:
-        return _section_bg_cache[key].copy()
+        return _section_bg_cache[key]
     filename = {"EASY": "easy.png", "MEDIUM": "medium.png",
                 "HARD": "hard.png"}.get(key)
     if not filename:
@@ -1367,7 +1378,14 @@ def _get_section_bg(difficulty: str, w: int, h: int) -> Image.Image:
         return None
     bg = _load_scene_bg({"file": f"section/{filename}"}, w, h)
     _section_bg_cache[key] = bg
-    return bg.copy() if bg else None
+    # Pre-split halves for the left/right slide animation
+    if bg:
+        half_w = w // 2
+        _section_halves_cache[key] = (
+            bg.crop((0, 0, half_w, h)),
+            bg.crop((half_w, 0, w, h)),
+        )
+    return bg
 
 
 def _render_section_card(t: float, ctx: EmojiQuizContext,
@@ -1384,20 +1402,21 @@ def _render_section_card(t: float, ctx: EmojiQuizContext,
 
     # --- Split transition: left half from left, right half from right (1s) ---
     trans_dur = 1.0
-    if elapsed < trans_dur:
+    key = difficulty.upper()
+    if elapsed < trans_dur and key in _section_halves_cache:
         progress = elapsed / trans_dur
         ease = 1.0 - (1.0 - progress) ** 3
         half_w = w // 2
-
-        left_half = bg.crop((0, 0, half_w, h))
-        right_half = bg.crop((half_w, 0, w, h))
-
-        # Left half slides in from the left, right half from the right
+        left_half, right_half = _section_halves_cache[key]
         left_offset = int(half_w * (1.0 - ease))
         right_offset = int(half_w * (1.0 - ease))
 
         frame = Image.new("RGBA", (w, h), (0, 0, 0, 255))
-        frame.paste(left_half, (-left_offset, 0))
+        if left_offset > 0:
+            visible = left_half.crop((left_offset, 0, half_w, h))
+            frame.paste(visible, (0, 0))
+        else:
+            frame.paste(left_half, (0, 0))
         frame.paste(right_half, (half_w + right_offset, 0))
     else:
         frame = bg.copy()
@@ -1491,22 +1510,21 @@ def _render_outro(t: float, ctx: EmojiQuizContext,
 
     # --- Split transition entrance for first 1s ---
     trans_dur = 1.0
-    if elapsed < trans_dur:
+    if elapsed < trans_dur and _outro_top_cache is not None:
         progress = elapsed / trans_dur
         ease = 1.0 - (1.0 - progress) ** 3
         half_h = h // 2
-
-        # Split outro image into top and bottom halves
-        top_half = outro_img.crop((0, 0, w, half_h))
-        bottom_half = outro_img.crop((0, half_h, w, h))
-
-        # Top slides down from above, bottom slides up from below
         top_offset = int(half_h * (1.0 - ease))
         bottom_offset = int(half_h * (1.0 - ease))
 
         frame = Image.new("RGBA", (w, h), (0, 0, 0, 255))
-        frame.paste(top_half, (0, -top_offset))
-        frame.paste(bottom_half, (0, half_h + bottom_offset))
+        # Crop the visible portion when offset is negative
+        if top_offset > 0:
+            visible = _outro_top_cache.crop((0, top_offset, w, half_h))
+            frame.paste(visible, (0, 0))
+        else:
+            frame.paste(_outro_top_cache, (0, 0))
+        frame.paste(_outro_bot_cache, (0, half_h + bottom_offset))
     else:
         frame = outro_img.copy()
 
@@ -1639,11 +1657,8 @@ def render_emoji_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
             frame = reveal_bg.copy()
         else:
             frame = _render_bg(w, h, t, ctx.category)
-        reveal_start = None
-        for ev in ctx.timeline:
-            if ev.get("round") == round_idx and ev["phase"] == "reveal":
-                reveal_start = ev["start"]
-                break
+        # Reveal start is always EMOJI_REVEAL_START before fact start
+        reveal_start = event["start"] - (config.EMOJI_FACT_START - config.EMOJI_REVEAL_START)
         for burst in ctx.confetti_bursts:
             frame = burst.render(frame, t)
         if reveal_start:
@@ -1659,23 +1674,19 @@ def render_emoji_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
         trans_dur = event["end"] - event["start"]
         progress = min(1.0, trans_elapsed / trans_dur) if trans_dur > 0 else 1.0
 
-        if _transition_bg_cache is not None:
-            # Ease-out cubic for smooth landing
+        if _transition_top_cache is not None:
             ease = 1.0 - (1.0 - progress) ** 3
             half_h = h // 2
-
-            # Split the transition image into top and bottom halves
-            top_half = _transition_bg_cache.crop((0, 0, w, half_h))
-            bottom_half = _transition_bg_cache.crop((0, half_h, w, h))
-
-            # Top half slides down from above: starts at -half_h, ends at 0
             top_offset = int(half_h * (1.0 - ease))
-            # Bottom half slides up from below: starts at h, ends at half_h
             bottom_offset = int(half_h * (1.0 - ease))
 
             frame = Image.new("RGBA", (w, h), (0, 0, 0, 255))
-            frame.paste(top_half, (0, -top_offset))
-            frame.paste(bottom_half, (0, half_h + bottom_offset))
+            if top_offset > 0:
+                visible = _transition_top_cache.crop((0, top_offset, w, half_h))
+                frame.paste(visible, (0, 0))
+            else:
+                frame.paste(_transition_top_cache, (0, 0))
+            frame.paste(_transition_bot_cache, (0, half_h + bottom_offset))
         else:
             # Fallback: darken the reveal scene
             reveal_bg, _ = _get_reveal_bg()
