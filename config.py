@@ -22,6 +22,7 @@ SFX_DIR = ASSETS_DIR / "sfx"
 # --- Branding assets (used in ALL video formats) ---
 # Intro: full landscape scene with Leo mascot, rainbow, castle
 INTRO_BACKGROUND = BRANDING_DIR / "intro_background.png"
+EMOJI_INTRO_BACKGROUND = ASSETS_DIR / "backgrounds" / "intro_emoji.png"
 # Outro/watermark: Leo Quizz logo (transparent PNG)
 LOGO_IMAGE = BRANDING_DIR / "logo.png"
 MUSIC_DIR = ASSETS_DIR / "music"
@@ -336,7 +337,7 @@ SPEED_CARD_RADIUS = 18             # rounded corner radius
 # ============================================================
 
 # --- Emoji quiz structure ---
-EMOJI_ROUNDS = 40                        # 40 rounds total (~6 min video)
+EMOJI_ROUNDS = 88                        # 88 rounds total (~15 min YouTube long-form)
 EMOJI_TIMER_SECONDS = 5                  # 5-second guess window
 EMOJI_ROUND_DURATION = 10.0              # 10s per round: 5s timer + 4s reveal/fact + 1s transition
 EMOJI_INTRO_DURATION = 4.0               # Title card + channel branding
@@ -353,7 +354,7 @@ EMOJI_TRANSITION_START = 9.0             # Split transition to next round (1s)
 
 # --- Difficulty tiers (20 easy + 10 medium + 10 hard = 40) ---
 EMOJI_DIFFICULTIES = ["EASY", "MEDIUM", "HARD"]
-EMOJI_ROUNDS_PER_DIFFICULTY = {"EASY": 20, "MEDIUM": 10, "HARD": 10}
+EMOJI_ROUNDS_PER_DIFFICULTY = {"EASY": 44, "MEDIUM": 22, "HARD": 22}
 
 # --- Emoji quiz category types ---
 # Each emoji category defines what kinds of things can be guessed

@@ -54,22 +54,22 @@ _BG_DIR = config.ASSETS_DIR / "backgrounds"
 CLUE_BACKGROUNDS = [
     # Whiteboard with paw logo, ? stones
     {"file": "clue/clue_01_jungle_board.png",
-     "cx": 0.50, "emoji_w": 0.50, "emoji_y": 0.35},
+     "cx": 0.50, "emoji_w": 0.50, "emoji_y": 0.45},
     # Forest adventure board with Leo + signs
     {"file": "clue/clue_02_forest_adventure.png",
-     "cx": 0.50, "emoji_w": 0.42, "emoji_y": 0.40},
+     "cx": 0.50, "emoji_w": 0.42, "emoji_y": 0.48},
     # Big whiteboard with Leo Quizz Kids logo
     {"file": "clue/clue_03_forest_board.png",
-     "cx": 0.52, "emoji_w": 0.40, "emoji_y": 0.42},
+     "cx": 0.52, "emoji_w": 0.40, "emoji_y": 0.50},
     # Big rock face with Leo
     {"file": "clue/clue_04_rock.png",
-     "cx": 0.50, "emoji_w": 0.38, "emoji_y": 0.48},
+     "cx": 0.50, "emoji_w": 0.38, "emoji_y": 0.52},
     # Jungle classroom board
     {"file": "clue/clue_05_jungle_classroom.png",
-     "cx": 0.50, "emoji_w": 0.45, "emoji_y": 0.38},
+     "cx": 0.50, "emoji_w": 0.45, "emoji_y": 0.48},
     # Big round rock with Leo Kids
     {"file": "clue/clue_06_kids_rock.png",
-     "cx": 0.52, "emoji_w": 0.35, "emoji_y": 0.46},
+     "cx": 0.52, "emoji_w": 0.35, "emoji_y": 0.52},
 ]
 
 # Reveal scene backgrounds (stage/platform for answer photo)
@@ -77,19 +77,19 @@ REVEAL_BACKGROUNDS = [
     # Each BG has a stone pathway / clearing in the center-bottom
     # Photo is placed right in that blank space
     {"file": "reveal/reveal_01_tropical.png",
-     "cx": 0.50, "cy": 0.58, "photo_w": 0.32, "photo_h": 0.38},
+     "cx": 0.50, "cy": 0.42, "photo_w": 0.34, "photo_h": 0.40},
     {"file": "reveal/reveal_02_jungle.png",
-     "cx": 0.50, "cy": 0.58, "photo_w": 0.32, "photo_h": 0.38},
+     "cx": 0.50, "cy": 0.42, "photo_w": 0.34, "photo_h": 0.40},
     {"file": "reveal/reveal_03_pathway.png",
-     "cx": 0.50, "cy": 0.58, "photo_w": 0.32, "photo_h": 0.38},
+     "cx": 0.50, "cy": 0.42, "photo_w": 0.34, "photo_h": 0.40},
     {"file": "reveal/reveal_04_meadow.png",
-     "cx": 0.50, "cy": 0.58, "photo_w": 0.32, "photo_h": 0.38},
+     "cx": 0.50, "cy": 0.42, "photo_w": 0.34, "photo_h": 0.40},
     {"file": "reveal/reveal_05_night.png",
-     "cx": 0.50, "cy": 0.58, "photo_w": 0.32, "photo_h": 0.38},
+     "cx": 0.50, "cy": 0.42, "photo_w": 0.34, "photo_h": 0.40},
     {"file": "reveal/reveal_06_temple.png",
-     "cx": 0.50, "cy": 0.58, "photo_w": 0.32, "photo_h": 0.38},
+     "cx": 0.50, "cy": 0.42, "photo_w": 0.34, "photo_h": 0.40},
     {"file": "reveal/reveal_07_ruins.png",
-     "cx": 0.50, "cy": 0.58, "photo_w": 0.32, "photo_h": 0.38},
+     "cx": 0.50, "cy": 0.42, "photo_w": 0.34, "photo_h": 0.40},
 ]
 
 # Caches for the chosen backgrounds (set once per video)
@@ -599,10 +599,10 @@ def _render_question_mark(frame: Image.Image, t: float,
 def _render_timer_bar(frame: Image.Image, t: float,
                        round_start: float) -> Image.Image:
     """
-    # Monkey Quiz-style countdown timer bar.
-    # Wide orange-to-red gradient bar at bottom center.
-    # Depletes from right to left as time runs out.
-    # Rounded pill shape with dark border.
+    # Countdown timer bar with clock icon.
+    # Bar slides in from right side at start.
+    # Clock icon beside the bar vibrates when time's up.
+    # Depletes from right to left, orange → red.
     """
     w, h = frame.size
     elapsed = t - round_start - config.EMOJI_EMOJI_SETTLE
@@ -613,15 +613,69 @@ def _render_timer_bar(frame: Image.Image, t: float,
     progress = max(0.0, min(1.0, elapsed / timer_duration))
     remaining = 1.0 - progress
 
+    # --- Slide-in from right animation (0.4s ease-out) ---
+    slide_duration = 0.4
+    if elapsed < slide_duration:
+        slide_p = elapsed / slide_duration
+        slide_ease = 1.0 - (1.0 - slide_p) ** 3
+        slide_offset = int(w * 0.7 * (1.0 - slide_ease))
+    else:
+        slide_offset = 0
+
     # --- Dimensions (wide, prominent bar) ---
-    bar_w = int(w * 0.65)
+    bar_w = int(w * 0.55)
     bar_h = 32
-    bar_x = (w - bar_w) // 2
+    bar_x = (w - bar_w) // 2 + slide_offset
     bar_y = int(h * 0.78)
 
-    # --- Dark border/background ---
+    # --- Clock icon position (left of bar) ---
+    clock_size = 48
+    clock_x = bar_x - clock_size - 16
+    clock_y = bar_y + bar_h // 2
+
+    # --- Clock vibration when time is up ---
+    clock_shake_x = 0
+    clock_shake_y = 0
+    time_up = elapsed >= timer_duration
+    if time_up:
+        vibrate_elapsed = elapsed - timer_duration
+        if vibrate_elapsed < 0.5:
+            intensity = 6.0 * (1.0 - vibrate_elapsed / 0.5)
+            clock_shake_x = int(intensity * math.sin(vibrate_elapsed * 60))
+            clock_shake_y = int(intensity * 0.5 * math.cos(vibrate_elapsed * 45))
+
+    # --- Draw clock icon (circle + hands) ---
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
+
+    cx = clock_x + clock_shake_x
+    cy = clock_y + clock_shake_y
+    r = clock_size // 2
+
+    # Clock body (white circle with dark border)
+    od.ellipse([cx - r - 3, cy - r - 3, cx + r + 3, cy + r + 3],
+               fill=(30, 20, 40, 220))
+    if time_up and (elapsed - timer_duration) < 0.5:
+        # Red flash when vibrating
+        od.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(230, 50, 50))
+    else:
+        od.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255))
+
+    # Clock hands
+    hand_color = (30, 20, 40)
+    # Hour hand (short, pointing ~10 o'clock)
+    hx = cx + int(r * 0.35 * math.cos(math.radians(-60)))
+    hy = cy + int(r * 0.35 * math.sin(math.radians(-60)))
+    od.line([(cx, cy), (hx, hy)], fill=hand_color, width=3)
+    # Minute hand (long, rotates with timer progress)
+    angle = -90 + 360 * progress
+    mx = cx + int(r * 0.6 * math.cos(math.radians(angle)))
+    my = cy + int(r * 0.6 * math.sin(math.radians(angle)))
+    od.line([(cx, cy), (mx, my)], fill=hand_color, width=2)
+    # Center dot
+    od.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=hand_color)
+
+    # --- Dark border/background for timer bar ---
     border = 4
     od.rounded_rectangle(
         [bar_x - border, bar_y - border,
@@ -632,7 +686,6 @@ def _render_timer_bar(frame: Image.Image, t: float,
     # --- Colored fill (orange → red gradient as time depletes) ---
     fill_w = int(bar_w * remaining)
     if fill_w > bar_h // 2:
-        # Color: orange when full → red when almost empty
         if remaining > 0.5:
             r_c = 255
             g_c = int(180 * remaining)
@@ -666,9 +719,10 @@ def _render_timer_bar(frame: Image.Image, t: float,
     secs_left = max(0, int(timer_duration - elapsed))
     timer_font = _get_font(40, bold=True)
     draw = ImageDraw.Draw(frame)
-    draw.text((w // 2 + 2, bar_y - 30 + 2), str(secs_left),
+    num_x = (bar_x + bar_x + bar_w) // 2
+    draw.text((num_x + 2, bar_y - 30 + 2), str(secs_left),
               fill=(0, 0, 0, 120), anchor="mm", font=timer_font)
-    draw.text((w // 2, bar_y - 30), str(secs_left),
+    draw.text((num_x, bar_y - 30), str(secs_left),
               fill=(255, 255, 255), anchor="mm", font=timer_font)
 
     return frame
@@ -725,6 +779,12 @@ def _render_answer_reveal(frame: Image.Image, answer: str,
             scale = 1.0 + (1.2 - 1.0) * (1.0 - (p - 0.7) / 0.3) * 0.1
     else:
         scale = 1.0
+
+    # --- Subtle seesaw rocking after photo fully appears ---
+    # Left side tilts up while right tilts down, then reverses
+    rock_angle = 0.0
+    if elapsed > 0.5:
+        rock_angle = 1.5 * math.sin((elapsed - 0.5) * 1.8)
 
     full_text = answer.upper()
 
@@ -789,15 +849,27 @@ def _render_answer_reveal(frame: Image.Image, answer: str,
             radius=30, fill=(0, 0, 0, 80))
         frame = Image.alpha_composite(frame, shadow_overlay)
 
-        # Paste the framed photo
-        fx = photo_cx - frame_w // 2
-        fy = photo_cy - frame_h // 2
+        # Apply subtle seesaw rocking rotation
+        if abs(rock_angle) > 0.05:
+            photo_frame = photo_frame.rotate(
+                rock_angle, resample=Image.BICUBIC, expand=True)
+
+        # Paste the framed photo (centered after rotation may change size)
+        fx = photo_cx - photo_frame.width // 2
+        fy = photo_cy - photo_frame.height // 2
         frame.paste(photo_frame, (fx, fy), photo_frame)
 
         # --- Red banner with answer name below photo ---
-        banner_y = photo_cy + frame_h // 2 + 20
+        banner_y = photo_cy + frame_h // 2 + 16
     else:
-        banner_y = int(h * 0.65)
+        banner_y = int(h * 0.60)
+
+    # --- Answer banner slides up into place ---
+    banner_slide = 0
+    if elapsed < 0.6:
+        slide_p = max(0, (elapsed - 0.3)) / 0.3
+        banner_slide = int(60 * (1.0 - min(1.0, slide_p)))
+    banner_y += banner_slide
 
     # --- Answer banner (red gradient pill with answer text) ---
     size = int(config.EMOJI_ANSWER_FONT_SIZE * scale)
@@ -834,33 +906,84 @@ def _render_answer_reveal(frame: Image.Image, answer: str,
 
 def _render_fun_fact(frame: Image.Image, fact: str,
                       t: float, fact_start: float) -> Image.Image:
-    """# Fun fact text in a pill below the answer, fades in from below."""
+    """
+    # Fun fact banner that fades in below the answer banner.
+    # Positioned relative to the photo/answer layout so it never overlaps.
+    # Styled with jungle theme: dark purple body, gold accents.
+    """
     w, h = frame.size
     elapsed = t - fact_start
     if elapsed < 0 or not fact:
         return frame
 
-    if elapsed < 0.3:
-        alpha = int(255 * (elapsed / 0.3))
-        offset_y = int(15 * (1 - elapsed / 0.3))
+    # --- Fade-in + slide-up animation (0.4s) ---
+    if elapsed < 0.4:
+        anim_p = elapsed / 0.4
+        alpha = int(255 * anim_p)
+        offset_y = int(20 * (1 - anim_p))
     else:
         alpha = 255
         offset_y = 0
 
-    font = _get_font(30, bold=True)
-    fact_y = int(h * 0.78) + offset_y
+    # Position: below the answer banner (answer is at ~cy + photo_h/2 + 16 + banner_h)
+    # Use reveal config to calculate consistently
+    _, rev_cfg = _get_reveal_bg()
+    if rev_cfg:
+        photo_cy = int(h * rev_cfg.get("cy", 0.42))
+        photo_h_px = int(h * rev_cfg.get("photo_h", 0.40))
+        border = 8
+        frame_h = photo_h_px + border * 2
+        # Answer banner sits at photo bottom + 16, height ~ 102
+        answer_bottom = photo_cy + frame_h // 2 + 16 + 102
+        fact_top = answer_bottom + 12
+    else:
+        fact_top = int(h * 0.78)
 
-    draw = ImageDraw.Draw(frame)
+    fact_top += offset_y
+
+    font = _get_font(24, bold=True)
     fact_w = font.getlength(fact)
-    pill_pad = 24
-    pill_x1 = int((w - fact_w) / 2 - pill_pad)
-    pill_x2 = int((w + fact_w) / 2 + pill_pad)
-    draw.rounded_rectangle(
-        [pill_x1, fact_y - 20, pill_x2, fact_y + 20],
-        radius=18, fill=(0, 0, 0, min(160, alpha)))
-    draw.text((w // 2, fact_y), fact,
-              fill=(255, 255, 255, alpha), anchor="mm", font=font)
+    label_text = "DID YOU KNOW?"
+    label_font = _get_font(14, bold=True)
 
+    # Banner dimensions
+    content_w = max(fact_w, 200) + 60
+    banner_w = int(min(content_w, w * 0.75))
+    banner_h = 58
+    banner_x = (w - banner_w) // 2
+
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+
+    # --- Shadow ---
+    od.rounded_rectangle(
+        [banner_x + 3, fact_top + 3,
+         banner_x + banner_w + 3, fact_top + banner_h + 3],
+        radius=12, fill=(0, 0, 0, min(70, int(70 * alpha / 255))))
+
+    # --- Dark purple body ---
+    od.rounded_rectangle(
+        [banner_x, fact_top,
+         banner_x + banner_w, fact_top + banner_h],
+        radius=12, fill=(40, 20, 55, min(220, alpha)))
+
+    # --- Gold border ---
+    od.rounded_rectangle(
+        [banner_x + 2, fact_top + 2,
+         banner_x + banner_w - 2, fact_top + banner_h - 2],
+        radius=10, outline=(255, 200, 50, min(160, alpha)), width=2)
+
+    # --- "DID YOU KNOW?" label ---
+    label_y = fact_top + 14
+    od.text((w // 2, label_y), label_text,
+            fill=(255, 200, 50, alpha), anchor="mm", font=label_font)
+
+    # --- Fact text ---
+    text_y = fact_top + banner_h // 2 + 8
+    od.text((w // 2, text_y), fact,
+            fill=(255, 255, 255, alpha), anchor="mm", font=font)
+
+    frame = Image.alpha_composite(frame, overlay)
     return frame
 
 
@@ -997,124 +1120,130 @@ def _render_subtitle(frame: Image.Image, text: str, t: float,
 # SPECIAL SCREENS
 # ============================================================
 
-# --- Cached intro background image (loaded once) ---
+# --- Cached intro background images (loaded once) ---
 _intro_bg_cache = None
+_intro_emoji_bg_cache = None
+_subscribe_btn_cache = None
+
+
+def _load_and_fit(path, w: int, h: int) -> Image.Image:
+    """# Load image and cover-crop to exact video dimensions."""
+    if not path.exists():
+        return None
+    img = Image.open(path).convert("RGBA")
+    img_ratio = img.width / img.height
+    target_ratio = w / h
+    if img_ratio > target_ratio:
+        new_h = h
+        new_w = int(h * img_ratio)
+    else:
+        new_w = w
+        new_h = int(w / img_ratio)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left = (new_w - w) // 2
+    top = (new_h - h) // 2
+    return img.crop((left, top, left + w, top + h))
 
 
 def _get_intro_bg(w: int, h: int) -> Image.Image:
-    """
-    # Load and cache the branded intro background scene.
-    # Uses the Leo Quizz landscape scene (rainbow, castle, mascot).
-    # Falls back to gradient if the image file doesn't exist.
-    """
+    """# Load and cache the Leo Quizz branding landscape."""
     global _intro_bg_cache
     if _intro_bg_cache is not None:
         return _intro_bg_cache.copy()
-
-    if config.INTRO_BACKGROUND.exists():
-        img = Image.open(config.INTRO_BACKGROUND).convert("RGBA")
-        # Resize to exact video dimensions (maintain aspect ratio, crop excess)
-        img_ratio = img.width / img.height
-        target_ratio = w / h
-        if img_ratio > target_ratio:
-            # Image is wider — fit height, crop width
-            new_h = h
-            new_w = int(h * img_ratio)
-        else:
-            # Image is taller — fit width, crop height
-            new_w = w
-            new_h = int(w / img_ratio)
-        img = img.resize((new_w, new_h), Image.LANCZOS)
-        # Center crop to exact video size
-        left = (new_w - w) // 2
-        top = (new_h - h) // 2
-        img = img.crop((left, top, left + w, top + h))
+    img = _load_and_fit(config.INTRO_BACKGROUND, w, h)
+    if img:
         _intro_bg_cache = img
         return img.copy()
-    else:
-        return None
+    return None
 
 
-# --- Cached scattered emoji positions (seeded per-video, not per-frame) ---
-_intro_emoji_layout = None
+def _get_emoji_intro_bg(w: int, h: int) -> Image.Image:
+    """# Load and cache the custom jungle emoji intro artwork."""
+    global _intro_emoji_bg_cache
+    if _intro_emoji_bg_cache is not None:
+        return _intro_emoji_bg_cache.copy()
+    img = _load_and_fit(config.EMOJI_INTRO_BACKGROUND, w, h)
+    if img:
+        _intro_emoji_bg_cache = img
+        return img.copy()
+    return None
 
 
-def _get_intro_emoji_layout(w: int, h: int, category: str,
-                             emoji_list: list, seed: int = 42) -> list:
+def _get_subscribe_btn(h: int) -> Image.Image:
     """
-    # Structured emoji layout for intro — neat frame around the title.
-    # 10 fixed positions: 3 left column, 3 right column, 2 top, 2 bottom.
-    # All same size, evenly spaced, clean and intentional.
+    # Render the subscribe button with thumbs-up and bell emoji.
+    # Red pill shape with white "SUBSCRIBE" text, emoji on each side.
     """
-    global _intro_emoji_layout
-    if _intro_emoji_layout is not None:
-        return _intro_emoji_layout
+    global _subscribe_btn_cache
+    if _subscribe_btn_cache is not None:
+        return _subscribe_btn_cache.copy()
 
-    rng = random.Random(seed)
-    # Pick 10 unique emoji (no duplicates if possible)
-    unique = list(dict.fromkeys(emoji_list))
-    rng.shuffle(unique)
-    chosen = unique[:10]
-    while len(chosen) < 10:
-        chosen.append(rng.choice(emoji_list))
+    btn_font = _get_font(38, bold=True)
+    text = "SUBSCRIBE"
+    text_w = btn_font.getlength(text)
 
-    size = 200  # big sticker-style emoji for premium intro
-    # Fixed grid positions (x, y) — frame around center title area
-    # Left column (3 emoji, evenly spaced vertically)
-    # Right column (3 emoji, evenly spaced vertically)
-    # Top row (2 emoji, spaced between left/right columns)
-    # Bottom row (2 emoji, spaced between left/right columns)
-    slots = [
-        # Left column
-        (int(w * 0.08), int(h * 0.18)),
-        (int(w * 0.10), int(h * 0.48)),
-        (int(w * 0.08), int(h * 0.78)),
-        # Right column
-        (int(w * 0.88), int(h * 0.18)),
-        (int(w * 0.86), int(h * 0.48)),
-        (int(w * 0.88), int(h * 0.78)),
-        # Top row
-        (int(w * 0.30), int(h * 0.08)),
-        (int(w * 0.68), int(h * 0.08)),
-        # Bottom row (above subtitle area)
-        (int(w * 0.30), int(h * 0.72)),
-        (int(w * 0.68), int(h * 0.72)),
-    ]
+    emoji_size = 60
+    btn_w = int(text_w + emoji_size * 2 + 60)
+    btn_h = 70
+    pad = 10
 
-    positions = []
-    for i, emoji_char in enumerate(chosen):
-        x, y = slots[i]
-        pop_time = 0.2 + i * 0.12
-        wobble_phase = rng.random() * math.pi * 2
-        positions.append((emoji_char, x, y, size, pop_time, wobble_phase))
+    canvas = Image.new("RGBA", (btn_w + pad * 2, btn_h + pad * 2), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(canvas)
 
-    _intro_emoji_layout = positions
-    return positions
+    # Shadow
+    cd.rounded_rectangle(
+        [pad + 3, pad + 3, pad + btn_w + 3, pad + btn_h + 3],
+        radius=btn_h // 2, fill=(0, 0, 0, 100))
+
+    # Red pill body
+    cd.rounded_rectangle(
+        [pad, pad, pad + btn_w, pad + btn_h],
+        radius=btn_h // 2, fill=(230, 20, 20))
+
+    # Highlight strip
+    cd.rounded_rectangle(
+        [pad + 6, pad + 3, pad + btn_w - 6, pad + btn_h // 2],
+        radius=btn_h // 4, fill=(255, 60, 60, 80))
+
+    # "SUBSCRIBE" text
+    cd.text((pad + btn_w // 2, pad + btn_h // 2), text,
+            fill=(255, 255, 255), anchor="mm", font=btn_font)
+
+    # Thumbs up emoji (left side)
+    thumb = get_emoji_image("\U0001F44D", emoji_size, sticker=False)
+    if thumb:
+        tx = pad - thumb.width // 2 + 10
+        ty = pad + (btn_h - thumb.height) // 2
+        canvas.paste(thumb, (tx, ty), thumb)
+
+    # Bell emoji (right side)
+    bell = get_emoji_image("\U0001F514", emoji_size, sticker=False)
+    if bell:
+        bx = pad + btn_w - bell.width // 2 - 10
+        by = pad + (btn_h - bell.height) // 2
+        canvas.paste(bell, (bx, by), bell)
+
+    _subscribe_btn_cache = canvas
+    return canvas.copy()
 
 
 def _render_intro_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
     """
-    # 3-phase intro matching Monkey Quiz quality:
+    # 2-phase intro:
     #
     # PHASE 1 (0-3s): Leo Quizz branding landscape with Ken Burns zoom.
-    #   Shows the branded scene briefly — establishes the channel.
     #
-    # PHASE 2 (3s - subscribe_start): Cross-fade to scattered emoji scene.
-    #   "Guess The [CATEGORY] by EMOJI" title + round/timer info.
-    #   Emoji pop in one by one around the edges.
-    #
-    # PHASE 3 (subscribe_start - intro_end): Subscribe/Follow buttons.
-    #   Pulsing red subscribe + blue follow buttons with glow.
-    #   Plays while the subscribe voiceover is heard.
+    # PHASE 2 (3s+): Custom jungle emoji artwork (baked-in branding).
+    #   Subscribe button slides in from right, then rocks.
+    #   Subtitles play over both phases.
     """
     w, h = ctx.width, ctx.height
     elapsed = t
     narr = ctx.narration_pack
 
     # --- Timing boundaries ---
-    branding_end = 3.0  # phase 1 ends, cross-fade begins
-    fade_dur = 0.6      # cross-fade duration
-    # Subscribe phase starts when subscribe voice plays
+    branding_end = 3.0
+    fade_dur = 0.6
     sub_start = 0.3 + (narr.intro_duration if narr else 8.0) + 0.3
 
     # ================================================================
@@ -1123,7 +1252,6 @@ def _render_intro_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
     if elapsed < branding_end + fade_dur:
         intro_bg = _get_intro_bg(w, h)
         if intro_bg is not None:
-            # Ken Burns slow zoom
             zoom = 1.0 + elapsed * 0.015
             zw = int(w * zoom)
             zh = int(h * zoom)
@@ -1135,10 +1263,8 @@ def _render_intro_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
         else:
             branding_frame = _render_bg(w, h, t, ctx.category)
 
-        # If still fully in phase 1 (no cross-fade yet), return early
         if elapsed < branding_end:
             frame = branding_frame
-            # Subtitle during phase 1 too
             if narr and narr.intro_text and narr.intro_duration > 0:
                 frame = _render_subtitle(
                     frame, narr.intro_text, t,
@@ -1148,200 +1274,66 @@ def _render_intro_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
             return np.array(frame.convert("RGB"))
 
     # ================================================================
-    # PHASE 2+3: Scattered emoji scene (3s onward)
+    # PHASE 2: Custom jungle emoji artwork (3s onward)
     # ================================================================
-    frame = _render_bg(w, h, t, ctx.category)
+    emoji_bg = _get_emoji_intro_bg(w, h)
+    if emoji_bg is not None:
+        # Ken Burns slow zoom on the artwork
+        scene_elapsed = max(0, elapsed - branding_end)
+        zoom = 1.0 + scene_elapsed * 0.008
+        zw = int(w * zoom)
+        zh = int(h * zoom)
+        zoomed = emoji_bg.resize((zw, zh), Image.LANCZOS)
+        left = (zw - w) // 2
+        top = (zh - h) // 2
+        frame = zoomed.crop((left, top, left + w, top + h)).convert("RGBA")
+    else:
+        frame = _render_bg(w, h, t, ctx.category)
 
-    # --- Scattered emoji popping in ---
-    all_emoji = []
-    for rnd in ctx.rounds:
-        all_emoji.extend(rnd.emoji_clues)
-    if all_emoji:
-        layout = _get_intro_emoji_layout(w, h, ctx.category, all_emoji)
-        scene_elapsed = elapsed - branding_end  # time since emoji scene started
-        for emoji_char, ex, ey, esize, pop_time, wobble_phase in layout:
-            if scene_elapsed < pop_time:
-                continue
-            pop_elapsed = scene_elapsed - pop_time
-            if pop_elapsed < 0.3:
-                scale = pop_elapsed / 0.3
-                scale = 1.0 + 0.3 * math.sin(scale * math.pi)
-            else:
-                scale = 1.0
-            wobble_y = math.sin(elapsed * 1.5 + wobble_phase) * 6
-            wobble_x = math.cos(elapsed * 1.2 + wobble_phase) * 4
-            # Get at base size (cached), resize for pop animation
-            emoji_img = get_emoji_image(emoji_char, size=esize)
-            if emoji_img is None:
-                continue
-            if abs(scale - 1.0) > 0.01:
-                new_sz = int(emoji_img.width * scale)
-                emoji_img = emoji_img.resize((new_sz, new_sz), Image.LANCZOS)
-            if emoji_img:
-                paste_x = int(ex + wobble_x - emoji_img.width // 2)
-                paste_y = int(ey + wobble_y - emoji_img.height // 2)
-                if (0 <= paste_x < w - 20 and 0 <= paste_y < h - 20):
-                    frame.paste(emoji_img, (paste_x, paste_y), emoji_img)
-
-    # --- Cross-fade from branding to emoji scene ---
+    # --- Cross-fade from branding to emoji artwork ---
     if elapsed < branding_end + fade_dur:
         fade_progress = (elapsed - branding_end) / fade_dur
-        # Blend: branding fades out, emoji scene fades in
-        blend_alpha = int(255 * fade_progress)
         branding_rgb = branding_frame.convert("RGB")
         emoji_rgb = frame.convert("RGB")
-        blended = Image.blend(branding_rgb, emoji_rgb, fade_progress / 1.0)
+        blended = Image.blend(branding_rgb, emoji_rgb, fade_progress)
         frame = blended.convert("RGBA")
 
-    draw = ImageDraw.Draw(frame)
-
-    # --- Title: "Guess The [CATEGORY] by EMOJI" ---
-    cat_info = config.EMOJI_CATEGORIES.get(ctx.category, {})
-    display = cat_info.get("display", ctx.category.upper())
-    scene_elapsed = max(0, elapsed - branding_end)
-
-    if scene_elapsed > 0.3:
-        slide_progress = min(1.0, (scene_elapsed - 0.3) / 0.5)
-        slide_ease = 1.0 - (1.0 - slide_progress) ** 3
-        title_y = int(h * 0.32 + (1 - slide_ease) * 80)
-
-        guess_font = _get_font(64, bold=True)
-        draw.text((w // 2 + 3, title_y + 3), "Guess The",
-                  fill=(0, 0, 0, 120), anchor="mm", font=guess_font)
-        draw.text((w // 2, title_y), "Guess The",
-                  fill=(255, 255, 255), anchor="mm", font=guess_font)
-
-        cat_font = _get_font(90, bold=True)
-        cat_w = cat_font.getlength(display)
-        banner_pad = 24
-        banner_x1 = int((w - cat_w) / 2 - banner_pad)
-        banner_y1 = title_y + 30
-        banner_x2 = int((w + cat_w) / 2 + banner_pad)
-        banner_y2 = title_y + 105
-        draw.rounded_rectangle(
-            [banner_x1 + 4, banner_y1 + 4, banner_x2 + 4, banner_y2 + 4],
-            radius=14, fill=(0, 0, 0, 80))
-        draw.rounded_rectangle(
-            [banner_x1, banner_y1, banner_x2, banner_y2],
-            radius=14, fill=(220, 20, 20))
-        draw.text((w // 2, title_y + 67), display,
-                  fill=(255, 255, 0), anchor="mm", font=cat_font)
-
-        if scene_elapsed > 0.8:
-            emoji_font = _get_font(56, bold=True)
-            sub_alpha = min(255, int((scene_elapsed - 0.8) * 600))
-            draw.text((w // 2 + 3, title_y + 133), "by EMOJI",
-                      fill=(0, 0, 0, min(120, sub_alpha)),
-                      anchor="mm", font=emoji_font)
-            draw.text((w // 2, title_y + 130), "by EMOJI",
-                      fill=(255, 255, 255, sub_alpha),
-                      anchor="mm", font=emoji_font)
-
-    # --- Round count + timer info ---
-    if scene_elapsed > 1.5:
-        info_alpha = min(255, int((scene_elapsed - 1.5) * 500))
-        info_font = _get_font(48, bold=True)
-        num_text = f"{ctx.total_rounds} Questions"
-        time_text = f"{config.EMOJI_TIMER_SECONDS} Seconds"
-        info_y = int(h * 0.54)
-
-        nw = info_font.getlength(num_text)
-        pill_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        pd = ImageDraw.Draw(pill_overlay)
-        pd.rounded_rectangle(
-            [int(w / 2 - nw / 2 - 20), info_y - 26,
-             int(w / 2 + nw / 2 + 20), info_y + 26],
-            radius=26, fill=(40, 180, 60, info_alpha))
-        tw = info_font.getlength(time_text)
-        pd.rounded_rectangle(
-            [int(w / 2 - tw / 2 - 20), info_y + 38,
-             int(w / 2 + tw / 2 + 20), info_y + 90],
-            radius=26, fill=(240, 160, 20, info_alpha))
-        frame = Image.alpha_composite(frame, pill_overlay)
-        draw = ImageDraw.Draw(frame)
-
-        draw.text((w // 2, info_y), num_text,
-                  fill=(255, 255, 255, info_alpha),
-                  anchor="mm", font=info_font)
-        draw.text((w // 2, info_y + 64), time_text,
-                  fill=(255, 255, 255, info_alpha),
-                  anchor="mm", font=info_font)
-
     # ================================================================
-    # PHASE 3: Subscribe + Follow buttons (when subscribe voice plays)
+    # Subscribe button: slides in from right, then rocks gently
     # ================================================================
     if elapsed >= sub_start:
         sub_elapsed = elapsed - sub_start
-        btn_font = _get_font(42, bold=True)
-        btn_y = int(h * 0.72)
+        btn_img = _get_subscribe_btn(h)
+        btn_w, btn_h = btn_img.size
 
-        # Pop-in scale for buttons
-        if sub_elapsed < 0.4:
-            btn_scale = sub_elapsed / 0.4
-            btn_scale = 1.0 + 0.2 * math.sin(btn_scale * math.pi)
+        # Target position: bottom center
+        target_x = (w - btn_w) // 2
+        target_y = int(h * 0.88) - btn_h // 2
+
+        # Slide in from right (0.5s ease-out)
+        slide_dur = 0.5
+        if sub_elapsed < slide_dur:
+            slide_p = sub_elapsed / slide_dur
+            slide_ease = 1.0 - (1.0 - slide_p) ** 3
+            btn_x = int(w + (target_x - w) * slide_ease)
         else:
-            btn_scale = 1.0
+            btn_x = target_x
 
-        # Pulsing glow effect
-        pulse = 0.5 + 0.5 * math.sin(sub_elapsed * 4.0)
-        glow_expand = int(6 * pulse)
+        btn_y = target_y
 
-        # --- SUBSCRIBE button (red, left of center) ---
-        sub_text = "SUBSCRIBE"
-        sub_w = btn_font.getlength(sub_text)
-        sub_btn_w = int((sub_w + 60) * btn_scale)
-        sub_btn_h = int(60 * btn_scale)
-        sub_cx = w // 2 - 140
-        sub_x1 = sub_cx - sub_btn_w // 2
-        sub_y1 = btn_y - sub_btn_h // 2
-        sub_x2 = sub_cx + sub_btn_w // 2
-        sub_y2 = btn_y + sub_btn_h // 2
+        # Rocking motion after slide-in completes
+        if sub_elapsed > slide_dur:
+            rock_elapsed = sub_elapsed - slide_dur
+            rock_angle = 3.0 * math.sin(rock_elapsed * 3.5)
+            btn_img = btn_img.rotate(
+                rock_angle, resample=Image.BICUBIC, expand=True)
+            # Re-center after rotation changes size
+            btn_x = target_x - (btn_img.width - btn_w) // 2
+            btn_y = target_y - (btn_img.height - btn_h) // 2
 
-        btn_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        bd = ImageDraw.Draw(btn_overlay)
-        # Glow behind button
-        glow_alpha = int(80 * pulse)
-        bd.rounded_rectangle(
-            [sub_x1 - glow_expand, sub_y1 - glow_expand,
-             sub_x2 + glow_expand, sub_y2 + glow_expand],
-            radius=sub_btn_h // 2 + glow_expand,
-            fill=(255, 50, 50, glow_alpha))
-        # Button body
-        bd.rounded_rectangle(
-            [sub_x1, sub_y1, sub_x2, sub_y2],
-            radius=sub_btn_h // 2, fill=(220, 20, 20))
-        # Button text
-        bd.text((sub_cx, btn_y), sub_text,
-                fill=(255, 255, 255), anchor="mm", font=btn_font)
+        frame.paste(btn_img, (btn_x, btn_y), btn_img)
 
-        # --- FOLLOW button (blue, right of center) ---
-        fol_text = "FOLLOW"
-        fol_w = btn_font.getlength(fol_text)
-        fol_btn_w = int((fol_w + 60) * btn_scale)
-        fol_btn_h = int(60 * btn_scale)
-        fol_cx = w // 2 + 140
-        fol_x1 = fol_cx - fol_btn_w // 2
-        fol_y1 = btn_y - fol_btn_h // 2
-        fol_x2 = fol_cx + fol_btn_w // 2
-        fol_y2 = btn_y + fol_btn_h // 2
-
-        # Glow behind button
-        bd.rounded_rectangle(
-            [fol_x1 - glow_expand, fol_y1 - glow_expand,
-             fol_x2 + glow_expand, fol_y2 + glow_expand],
-            radius=fol_btn_h // 2 + glow_expand,
-            fill=(50, 100, 255, glow_alpha))
-        # Button body
-        bd.rounded_rectangle(
-            [fol_x1, fol_y1, fol_x2, fol_y2],
-            radius=fol_btn_h // 2, fill=(30, 80, 220))
-        # Button text
-        bd.text((fol_cx, btn_y), fol_text,
-                fill=(255, 255, 255), anchor="mm", font=btn_font)
-
-        frame = Image.alpha_composite(frame, btn_overlay)
-
-    # --- Word-by-word subtitle (intro voice, then subscribe voice) ---
+    # --- Word-by-word subtitles ---
     if narr and narr.intro_text and narr.intro_duration > 0:
         frame = _render_subtitle(
             frame, narr.intro_text, t,
@@ -1609,11 +1601,19 @@ def render_emoji_frame(t: float, ctx: EmojiQuizContext) -> np.ndarray:
             frame = _render_bg(w, h, t, ctx.category)
         frame = _render_emoji_clues(frame, rnd.emoji_clues, t, round_start)
         frame = _render_timer_bar(frame, t, round_start)
-        # Round counter badge (no full title banner — BG has branding)
+        # Round counter badge — slides in from left side
+        elapsed_in_round = t - round_start
+        slide_dur = 0.4
+        if elapsed_in_round < slide_dur:
+            slide_p = elapsed_in_round / slide_dur
+            slide_ease = 1.0 - (1.0 - slide_p) ** 3
+            badge_slide = int(-250 * (1.0 - slide_ease))
+        else:
+            badge_slide = 0
         draw = ImageDraw.Draw(frame)
         badge_font = _get_font(30, bold=True)
         badge_text = f"Round {round_idx + 1}/{ctx.total_rounds}"
-        badge_x = 40
+        badge_x = 40 + badge_slide
         badge_y = h - 70
         draw.rounded_rectangle(
             [badge_x - 10, badge_y - 8, badge_x + 200, badge_y + 38],
@@ -1723,9 +1723,10 @@ def assemble_emoji_quiz(emoji_pack: EmojiQuizPack, audio_path: Path,
     w, h = config.LONGFORM_SIZE
     num_rounds = len(emoji_pack.rounds)
 
-    # --- Reset cached intro layout for fresh render ---
-    global _intro_emoji_layout
-    _intro_emoji_layout = None
+    # --- Reset cached intro images for fresh render ---
+    global _intro_emoji_bg_cache, _subscribe_btn_cache
+    _intro_emoji_bg_cache = None
+    _subscribe_btn_cache = None
 
     # --- Load and resize custom scene backgrounds ---
     _init_scene_backgrounds(w, h)
